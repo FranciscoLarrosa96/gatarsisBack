@@ -17,6 +17,8 @@ La API está bajo `/api/v1`: catálogo, reserva, preference de Mercado Pago, est
 
 En producción definí explícitamente `NODE_ENV=production`. PostgreSQL admite `DATABASE_SSL=true`; la conexión conserva `rejectUnauthorized=true` y puede recibir la CA del proveedor mediante `DATABASE_SSL_CA` (acepta saltos de línea escapados como `\n`). El pool y los timeouts se controlan con `DATABASE_POOL_MAX`, `DATABASE_CONNECTION_TIMEOUT_MS`, `DATABASE_STATEMENT_TIMEOUT_MS` y `DATABASE_QUERY_TIMEOUT_MS`.
 
+La URL pública vigente del servicio es `https://gatarsisback.onrender.com` y la base de la API es `https://gatarsisback.onrender.com/api/v1`. Los clientes e integraciones externas deben utilizar este hostname.
+
 El proceso web no ejecuta seeds ni migrations al iniciar (`synchronize=false` y migrations automáticas deshabilitadas). Aplicá cada migration como un paso controlado del deploy con `npm run db:migration:run`; `npm run db:seed` es sólo para datos locales/de prueba.
 
 ## Stock y reserva
@@ -33,7 +35,7 @@ Configurá sin commitear secretos: `MP_ENABLED=true`, `MP_ACCESS_TOKEN`, `MP_WEB
 
 Después de reservar, solicitá `POST /checkout/:orderId/mercado-pago/preference`. La preference se genera desde los snapshots de `OrderItem`, usa `external_reference=orderId` y vence junto con la reserva. La respuesta devuelve `preferenceId`, `initPoint` y vencimiento, nunca el Access Token.
 
-Configurá en Mercado Pago un webhook HTTPS para **Payments** hacia `POST /api/v1/webhooks/mercado-pago`, y guardá su secret. Se validan `x-signature`, `x-request-id` y `data.id`; el evento entra en un inbox durable deduplicado y se consulta el Payment real antes de cambiar stock.
+Configurá en Mercado Pago un webhook HTTPS para **Payments** hacia `https://gatarsisback.onrender.com/api/v1/webhooks/mercado-pago`, y guardá su secret. Se validan `x-signature`, `x-request-id` y `data.id`; el evento entra en un inbox durable deduplicado y se consulta el Payment real antes de cambiar stock.
 
 Un Payment `approved` válido (referencia, ARS e importe exacto) hace una sola venta transaccional: descuenta reservado y stock, registra `SALE`, marca la Order `PAID` y el Payment `APPLIED`. Estados pending conservan la reserva. Los pagos tardíos, duplicados o inconsistentes quedan en `REQUIRES_REVIEW`; no existe auto-refund ni auto-restock.
 
