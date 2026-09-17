@@ -3,6 +3,11 @@ import { Test } from "@nestjs/testing";
 import request = require("supertest");
 import { DataSource } from "typeorm";
 import { AdminRefundsService } from "../src/admin/admin-refunds.service";
+import { AdminAuditLog } from "../src/admin/entities/admin-audit-log.entity";
+import {
+  RefundOperation,
+  RefundOperationStatus,
+} from "../src/payments/entities/refund-operation.entity";
 import { AdminRole, AdminUser } from "../src/admin/entities/admin-user.entity";
 import { AppModule } from "../src/app.module";
 import { InventoryMovement } from "../src/inventory/entities/inventory-movement.entity";
@@ -44,6 +49,7 @@ describe("raffle payments R4 (PostgreSQL)", () => {
   const getPayment = jest.fn();
   const searchPayments = jest.fn();
   const refundPayment = jest.fn();
+  const listRefunds = jest.fn();
   const validateWebhookSignature = jest.fn();
 
   beforeAll(async () => {
@@ -64,7 +70,7 @@ describe("raffle payments R4 (PostgreSQL)", () => {
         getPayment,
         searchPaymentsByExternalReference: searchPayments,
         refundPayment,
-        listRefunds: jest.fn().mockResolvedValue([]),
+        listRefunds,
         validateWebhookSignature,
       })
       .compile();
@@ -107,6 +113,7 @@ describe("raffle payments R4 (PostgreSQL)", () => {
       .mockReset()
       .mockResolvedValue({ id: `refund-${crypto.randomUUID()}` });
     validateWebhookSignature.mockReset();
+    listRefunds.mockReset().mockResolvedValue([]);
   });
 
   async function raffle() {
@@ -559,7 +566,7 @@ describe("raffle payments R4 (PostgreSQL)", () => {
     await expectNoMerchArtifacts(fixture.order.id);
   });
 
-  it("exposes PII-free status and keeps SOLD numbers after a confirmed refund", async () => {
+  it("exposes PII-free status and releases numbers after a confirmed refund of an ACTIVE raffle", async () => {
     const fixture = await reserve();
     const approved = remote(fixture.order);
     await payments.recordAndApply(approved);
@@ -597,11 +604,193 @@ describe("raffle payments R4 (PostgreSQL)", () => {
     expect(
       await ds.getRepository(Order).findOneByOrFail({ id: fixture.order.id }),
     ).toMatchObject({ status: OrderStatus.REFUNDED });
+    expect(await numbersFor(fixture.purchase.id)).toEqual([]);
+    const released = await ds.getRepository(RaffleNumber).findBy({
+      raffleId: fixture.raffle.id,
+      status: RaffleNumberStatus.AVAILABLE,
+    });
+    expect(released).toHaveLength(100);
+    expect(released.find((n) => n.number === 7)).toMatchObject({
+      rafflePurchaseId: null,
+      reservedAt: null,
+      reservedUntil: null,
+      soldAt: null,
+    });
+    const audit = await ds
+      .getRepository(AdminAuditLog)
+      .findOneByOrFail({ action: "RAFFLE_REFUND_NUMBERS_RELEASED" });
+    expect(audit.metadata).toMatchObject({
+      rafflePurchaseId: fixture.purchase.id,
+      numbers: [7, 23, 65],
+      processingResult: "RELEASED",
+      associations: [
+        expect.objectContaining({
+          number: 7,
+          rafflePurchaseId: fixture.purchase.id,
+          soldAt: expect.any(String),
+          reservedAt: expect.any(String),
+        }),
+        expect.any(Object),
+        expect.any(Object),
+      ],
+    });
+    const publicNumbers = await request(app.getHttpServer())
+      .get(`/api/v1/raffles/${fixture.raffle.id}/numbers`)
+      .expect(200);
     expect(
-      (await numbersFor(fixture.purchase.id)).every(
-        (item) => item.status === RaffleNumberStatus.SOLD,
-      ),
-    ).toBe(true);
+      publicNumbers.body.numbers.find((n: { number: number }) => n.number === 7)
+        .status,
+    ).toBe("AVAILABLE");
     await expectNoMerchArtifacts(fixture.order.id);
+  });
+
+  async function refundableFixture() {
+    const fixture = await reserve([7]);
+    const approved = remote(fixture.order);
+    await payments.recordAndApply(approved);
+    const payment = await ds
+      .getRepository(Payment)
+      .findOneByOrFail({ providerPaymentId: approved.id });
+    const admin = await ds.getRepository(AdminUser).save({
+      email: "refund-test@example.test",
+      passwordHash: "not-used",
+      role: AdminRole.ADMIN,
+      active: true,
+      lastLoginAt: null,
+    });
+    const key = crypto.randomUUID();
+    const refund = () =>
+      refunds.refund(payment.id, admin.id, key, "Solicitud del comprador");
+    return { ...fixture, payment, admin, refund };
+  }
+
+  it.each([
+    RaffleStatus.CLOSED,
+    RaffleStatus.DRAWN,
+    RaffleStatus.PAUSED,
+    RaffleStatus.DRAFT,
+  ])(
+    "does not release refunded numbers for raffle status %s",
+    async (status) => {
+      const f = await refundableFixture();
+      await ds.getRepository(Raffle).update(f.raffle.id, { status });
+      expect(await f.refund()).toMatchObject({ status: "SUCCEEDED" });
+      expect(
+        await ds.getRepository(Order).findOneByOrFail({ id: f.order.id }),
+      ).toMatchObject({ status: OrderStatus.REFUNDED });
+      expect(await numbersFor(f.purchase.id)).toEqual([
+        expect.objectContaining({ number: 7, status: RaffleNumberStatus.SOLD }),
+      ]);
+      expect(
+        (
+          await ds.getRepository(AdminAuditLog).findOneByOrFail({
+            action: "RAFFLE_REFUND_NUMBERS_RELEASE_SKIPPED",
+          })
+        ).metadata,
+      ).toMatchObject({
+        raffleStatus: status,
+        processingResult: "RAFFLE_NOT_OPEN",
+      });
+    },
+  );
+
+  it("keeps numbers sold during review and after a confirmed failed refund", async () => {
+    const f = await refundableFixture();
+    refundPayment.mockRejectedValueOnce(new Error("provider timeout"));
+    const result = await f.refund();
+    expect(result.status).toBe(RefundOperationStatus.REQUIRES_REVIEW);
+    expect((await numbersFor(f.purchase.id))[0].status).toBe(
+      RaffleNumberStatus.SOLD,
+    );
+    await refunds.reconcileRefundOperation(result.id);
+    expect(
+      await ds
+        .getRepository(RefundOperation)
+        .findOneByOrFail({ id: result.id }),
+    ).toMatchObject({ status: RefundOperationStatus.FAILED });
+    expect((await numbersFor(f.purchase.id))[0].status).toBe(
+      RaffleNumberStatus.SOLD,
+    );
+    expect(
+      await ds
+        .getRepository(AdminAuditLog)
+        .countBy({ action: "RAFFLE_REFUND_NUMBERS_RELEASED" }),
+    ).toBe(0);
+  });
+
+  it("serializes duplicate confirmation and never releases a later reservation or sale", async () => {
+    const f = await refundableFixture();
+    refundPayment.mockRejectedValueOnce(new Error("timeout after refund"));
+    const op = await f.refund();
+    listRefunds.mockResolvedValue([{ id: "confirmed-refund" }]);
+    await Promise.all([
+      refunds.reconcileRefundOperation(op.id),
+      refunds.reconcileRefundOperation(op.id),
+    ]);
+    expect(
+      await ds
+        .getRepository(AdminAuditLog)
+        .countBy({ action: "RAFFLE_REFUND_NUMBERS_RELEASED" }),
+    ).toBe(1);
+    const b = await reserve([7], f.raffle.id);
+    await f.refund();
+    await refunds.reconcileRefundOperation(op.id);
+    expect(await numbersFor(b.purchase.id)).toEqual([
+      expect.objectContaining({
+        number: 7,
+        status: RaffleNumberStatus.RESERVED,
+      }),
+    ]);
+    await payments.recordAndApply(remote(b.order));
+    const before = await numbersFor(b.purchase.id);
+    await f.refund();
+    await refunds.reconcileRefundOperation(op.id);
+    expect(await numbersFor(b.purchase.id)).toEqual(before);
+    expect(before[0].status).toBe(RaffleNumberStatus.SOLD);
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(await ds.getRepository(RafflePurchase).count()).toBe(2);
+  });
+
+  it("rolls back local release failures and reconciles without another provider refund", async () => {
+    const f = await refundableFixture();
+    await ds.query(
+      "CREATE FUNCTION fail_raffle_refund_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.status = 'SOLD' AND NEW.status = 'AVAILABLE' THEN RAISE EXCEPTION 'forced number release failure'; END IF; RETURN NEW; END; $$",
+    );
+    await ds.query(
+      "CREATE TRIGGER fail_raffle_refund_test BEFORE UPDATE ON raffle_numbers FOR EACH ROW EXECUTE FUNCTION fail_raffle_refund_test()",
+    );
+    let opId: string;
+    try {
+      const op = await f.refund();
+      opId = op.id;
+      expect(op.status).toBe(RefundOperationStatus.REQUIRES_REVIEW);
+      expect((await numbersFor(f.purchase.id))[0].status).toBe(
+        RaffleNumberStatus.SOLD,
+      );
+      expect(
+        await ds.getRepository(Order).findOneByOrFail({ id: f.order.id }),
+      ).toMatchObject({ status: OrderStatus.PAID });
+      expect(
+        await ds
+          .getRepository(AdminAuditLog)
+          .countBy({ action: "RAFFLE_REFUND_NUMBERS_RELEASED" }),
+      ).toBe(0);
+      expect(
+        (await ds.getRepository(RefundOperation).findOneByOrFail({ id: op.id }))
+          .lastError,
+      ).toContain("forced number release failure");
+    } finally {
+      await ds.query(
+        "DROP TRIGGER IF EXISTS fail_raffle_refund_test ON raffle_numbers",
+      );
+      await ds.query("DROP FUNCTION IF EXISTS fail_raffle_refund_test()");
+    }
+    listRefunds.mockResolvedValue([{ id: "provider-already-refunded" }]);
+    await refunds.reconcileRefundOperation(opId!);
+    expect(await numbersFor(f.purchase.id)).toEqual([]);
+    expect(
+      await ds.getRepository(Order).findOneByOrFail({ id: f.order.id }),
+    ).toMatchObject({ status: OrderStatus.REFUNDED });
+    expect(refundPayment).toHaveBeenCalledTimes(1);
   });
 });
