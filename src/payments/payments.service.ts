@@ -597,7 +597,13 @@ export class PaymentsService {
         401,
       );
     }
-    const type = String(input.body.type ?? input.body.topic ?? "");
+    const queryType = input.query.type;
+    const type = String(
+      input.body.type ??
+        input.body.topic ??
+        (Array.isArray(queryType) ? queryType[0] : queryType) ??
+        "",
+    );
     const providerPaymentId = Array.isArray(dataId) ? dataId[0] : dataId;
     if (type !== "payment" || !providerPaymentId) {
       this.trace("webhook_immediate_processing_skipped", {
@@ -606,7 +612,7 @@ export class PaymentsService {
       });
       return { received: true };
     }
-    if (bodyDataId !== providerPaymentId) {
+    if (bodyDataId !== null && bodyDataId !== providerPaymentId) {
       this.trace("webhook_immediate_processing_skipped", {
         providerPaymentId,
         processingResult: "QUERY_BODY_RESOURCE_ID_MISMATCH",
@@ -697,29 +703,14 @@ export class PaymentsService {
       });
       return { received: true };
     }
-    this.trace("webhook_immediate_processing_started", {
+    // Confirm receipt as soon as the signed notification is safely stored.
+    // Mercado Pago expects a 200/201 within 22 seconds; the inbox worker below
+    // performs the provider lookup and settlement asynchronously.
+    this.trace("webhook_processing_queued", {
       providerPaymentId,
       webhookEventId,
+      processingResult: "PENDING",
     });
-    try {
-      const result = await this.processWebhookEvent(webhookEventId);
-      const trace =
-        result === "FAILED"
-          ? "webhook_immediate_processing_failed"
-          : "webhook_immediate_processing_finished";
-      this.trace(trace, {
-        providerPaymentId,
-        webhookEventId,
-        processingResult: result,
-      });
-    } catch (error) {
-      this.trace("webhook_immediate_processing_failed", {
-        providerPaymentId,
-        webhookEventId,
-        processingResult: this.errorCode(error),
-      });
-      throw error;
-    }
     return { received: true };
   }
 
