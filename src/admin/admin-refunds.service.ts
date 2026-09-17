@@ -148,6 +148,7 @@ export class AdminRefundsService {
             .getRepository(Payment)
             .findOneByOrFail({ id: paymentId })
         ).providerPaymentId,
+        operation.idempotencyKey,
       );
       return await this.succeed(
         operation.id,

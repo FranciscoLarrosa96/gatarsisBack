@@ -3,6 +3,7 @@ import {
   InvalidWebhookSignatureError,
   MercadoPagoConfig,
   Payment,
+  PaymentRefund,
   Preference,
   WebhookSignatureValidator,
 } from "mercadopago";
@@ -36,7 +37,10 @@ export interface MercadoPagoGatewayContract {
   searchPaymentsByExternalReference(
     orderId: string,
   ): Promise<MercadoPagoPayment[]>;
-  refundPayment(paymentId: string): Promise<MercadoPagoRefund>;
+  refundPayment(
+    paymentId: string,
+    idempotencyKey: string,
+  ): Promise<MercadoPagoRefund>;
   listRefunds(paymentId: string): Promise<MercadoPagoRefund[]>;
   validateWebhookSignature(input: {
     xSignature?: string | string[];
@@ -54,6 +58,7 @@ export class MercadoPagoGateway implements MercadoPagoGatewayContract {
   });
   private readonly preferences = new Preference(this.client);
   private readonly payments = new Payment(this.client);
+  private readonly paymentRefunds = new PaymentRefund(this.client);
   private ensureEnabled() {
     if (!this.config.enabled || !this.config.accessToken)
       throw new Error("Mercado Pago is not enabled or configured");
@@ -117,16 +122,27 @@ export class MercadoPagoGateway implements MercadoPagoGatewayContract {
     });
     return (response.results ?? []) as MercadoPagoPayment[];
   }
-  async refundPayment(paymentId: string): Promise<MercadoPagoRefund> {
+  async refundPayment(
+    paymentId: string,
+    idempotencyKey: string,
+  ): Promise<MercadoPagoRefund> {
     this.ensureEnabled();
-    const response = await (this.payments as unknown as { refund(input: { id: string }): Promise<{ id?: string | number }> }).refund({ id: paymentId });
-    if (response.id == null) throw new Error('Mercado Pago returned an incomplete refund');
+    const response = await this.paymentRefunds.total({
+      payment_id: paymentId,
+      requestOptions: { idempotencyKey },
+    });
+    if (response.id == null)
+      throw new Error("Mercado Pago returned an incomplete refund");
     return { id: String(response.id) };
   }
   async listRefunds(paymentId: string): Promise<MercadoPagoRefund[]> {
     this.ensureEnabled();
-    const payment = await this.payments.get({ id: paymentId }) as unknown as { refunds?: Array<{ id?: string | number }> };
-    return (payment.refunds ?? []).filter((refund) => refund.id != null).map((refund) => ({ id: String(refund.id) }));
+    const refunds = await this.paymentRefunds.list({
+      payment_id: paymentId,
+    });
+    return refunds
+      .filter((refund) => refund.id != null)
+      .map((refund) => ({ id: String(refund.id) }));
   }
   validateWebhookSignature(input: {
     xSignature?: string | string[];
