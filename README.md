@@ -41,6 +41,8 @@ Un Payment `approved` válido (referencia, ARS e importe exacto) hace una sola v
 
 **Un redirect a `/checkout/success` NO confirma una compra.**
 
+Las nuevas preferences de tienda retornan a `/checkout/success|pending|failure`. Las de rifa retornan directamente a `/rifa/checkout/success|pending|failure?rafflePurchaseId=<id-real-de-la-compra>`, obtenido desde la relación de la orden. En ambos casos `external_reference` sigue siendo el `orderId`; nunca debe interpretarse como `rafflePurchaseId`. Las preferences READY existentes se reutilizan sin alterar sus URLs: el fallback legacy basado en contexto local del frontend puede seguir siendo necesario para esas preferences antiguas. Este cambio no modifica Angular ni implementa ese fallback.
+
 Con Mercado Pago deshabilitado, las reservas expiran de forma directa e idempotente. Con Mercado Pago habilitado, el scheduler reconcilia con el proveedor antes de liberar; ante una caída conserva la reserva para reintentar.
 
 Una orden vencida en `PAYMENT_PENDING` continúa reconciliándose durante `MP_PENDING_REVIEW_HOURS`, contadas desde el vencimiento de la reserva. Si Mercado Pago sigue confirmando un estado pending al finalizar esa ventana, el Payment pasa a revisión y la reserva se libera transaccionalmente. Un error de red nunca se interpreta como ausencia de pago.

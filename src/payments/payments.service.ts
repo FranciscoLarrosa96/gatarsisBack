@@ -244,10 +244,14 @@ export class PaymentsService {
           quantity: item.quantity,
           unit_price: centsToMercadoPagoAmount(item.unitPriceInCents),
         }));
+    const payload = this.preferencePayload(order, items, raffleContext);
     try {
-      const created = await this.gateway.createPreference(
-        this.preferencePayload(order, items),
-      );
+      this.trace("payment_preference_creation_started", {
+        orderId: order.id,
+        checkoutKind: order.kind === OrderKind.RAFFLE ? "RAFFLE" : "SHOP",
+        successBackUrl: payload.back_urls.success,
+      });
+      const created = await this.gateway.createPreference(payload);
       const preference = await this.readyPreference(order.id, created);
       this.traceRafflePreferenceReady(order, raffleContext);
       return this.preferenceResponse(order, preference);
@@ -278,15 +282,22 @@ export class PaymentsService {
       unit_price: number;
       currency_id?: string;
     }>,
+    raffleContext?: RafflePreferenceContext,
   ) {
     const frontendUrl = this.config.frontendUrl;
+    // The context is loaded from the actual Order -> RafflePurchase relation.
+    // external_reference remains the order ID, never the raffle purchase ID.
+    const checkoutPath = raffleContext ? "/rifa/checkout" : "/checkout";
+    const purchaseQuery = raffleContext
+      ? `?${new URLSearchParams({ rafflePurchaseId: raffleContext.rafflePurchaseId })}`
+      : "";
     return {
       items,
       external_reference: order.id,
       back_urls: {
-        success: `${frontendUrl}/checkout/success`,
-        pending: `${frontendUrl}/checkout/pending`,
-        failure: `${frontendUrl}/checkout/failure`,
+        success: `${frontendUrl}${checkoutPath}/success${purchaseQuery}`,
+        pending: `${frontendUrl}${checkoutPath}/pending${purchaseQuery}`,
+        failure: `${frontendUrl}${checkoutPath}/failure${purchaseQuery}`,
       },
       auto_return: "approved",
       expires: true,

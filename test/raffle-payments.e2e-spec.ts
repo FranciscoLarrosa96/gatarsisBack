@@ -216,6 +216,11 @@ describe("raffle payments R4 (PostgreSQL)", () => {
     expect(payload).toEqual(
       expect.objectContaining({
         external_reference: order.id,
+        back_urls: {
+          success: `https://gatarsis.com.ar/rifa/checkout/success?rafflePurchaseId=${purchase.id}`,
+          pending: `https://gatarsis.com.ar/rifa/checkout/pending?rafflePurchaseId=${purchase.id}`,
+          failure: `https://gatarsis.com.ar/rifa/checkout/failure?rafflePurchaseId=${purchase.id}`,
+        },
         auto_return: "approved",
         items: [
           expect.objectContaining({
@@ -234,6 +239,27 @@ describe("raffle payments R4 (PostgreSQL)", () => {
         orderId: order.id,
       }),
     ).toMatchObject({ status: PaymentPreferenceStatus.READY });
+  });
+
+  it("uses the real raffle purchase ID even through the order Preference endpoint", async () => {
+    const { purchase, order } = await reserve();
+    expect(purchase.id).not.toBe(order.id);
+    await request(app.getHttpServer())
+      .post(`/api/v1/checkout/${order.id}/mercado-pago/preference`)
+      .expect(201);
+    expect(createPreference).toHaveBeenCalledTimes(1);
+    const payload = createPreference.mock.calls[0][0];
+    expect(payload.external_reference).toBe(order.id);
+    for (const outcome of ["success", "pending", "failure"]) {
+      const url = new URL(payload.back_urls[outcome]);
+      expect(url.origin).toBe("https://gatarsis.com.ar");
+      expect(url.pathname).toBe(`/rifa/checkout/${outcome}`);
+      expect(url.searchParams.get("rafflePurchaseId")).toBe(purchase.id);
+      expect(url.searchParams.get("rafflePurchaseId")).not.toBe(order.id);
+      expect(url.pathname).not.toContain("//");
+    }
+    expect(payload.auto_return).toBe("approved");
+    expect(payload).not.toHaveProperty("notification_url");
   });
 
   it("single-flights concurrent creation and recovers a stale CREATING by external_reference", async () => {
