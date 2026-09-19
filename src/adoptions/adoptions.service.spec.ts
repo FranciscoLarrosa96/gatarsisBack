@@ -9,6 +9,7 @@ import {
 } from "./adoption.dto";
 import { AdoptionMailTransport } from "./adoption-mail.transport";
 import { AdoptionsService } from "./adoptions.service";
+import { DataSource } from "typeorm";
 
 class FakeTransport implements AdoptionMailTransport {
   readonly messages: SendMailOptions[] = [];
@@ -28,7 +29,11 @@ describe("AdoptionsService", () => {
 
   beforeEach(() => {
     transport = new FakeTransport();
-    service = new AdoptionsService(enabledConfig(), transport);
+    service = new AdoptionsService(
+      enabledConfig(),
+      transport,
+      fakeDataSource(),
+    );
     log = jest.spyOn(Logger.prototype, "log").mockImplementation();
   });
 
@@ -86,6 +91,7 @@ describe("AdoptionsService", () => {
     service = new AdoptionsService(
       { ...enabledConfig(), enabled: false },
       transport,
+      fakeDataSource(),
     );
 
     await expect(
@@ -107,6 +113,15 @@ function enabledConfig(): AdoptionMailConfig {
     user: "sender@example.com",
     pass: "test-secret",
   };
+}
+
+function fakeDataSource(): DataSource {
+  return {
+    getRepository: () => ({
+      save: jest.fn().mockResolvedValue({ id: "application-id" }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    }),
+  } as unknown as DataSource;
 }
 
 function validApplication(): CreateAdoptionApplicationDto {

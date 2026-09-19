@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -142,6 +143,10 @@ export class AdoptionCommitmentsDto {
 }
 
 export class CreateAdoptionApplicationDto {
+  @IsOptional()
+  @IsUUID("4")
+  adoptableCatId?: string | null;
+
   @IsDefined()
   @ValidateNested()
   @Type(() => AdoptionApplicantDto)

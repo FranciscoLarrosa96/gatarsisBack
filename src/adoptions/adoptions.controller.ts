@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { randomUUID } from "crypto";
 import { CreateAdoptionApplicationDto } from "./adoption.dto";
@@ -10,6 +10,11 @@ const ADOPTION_RATE_WINDOW_MS = 10 * 60_000;
 @Controller("adoptions")
 export class AdoptionsController {
   constructor(private readonly adoptions: AdoptionsService) {}
+
+  @Get("cats")
+  cats() {
+    return this.adoptions.publicCats();
+  }
 
   @Post("applications")
   @UseGuards(ThrottlerGuard)

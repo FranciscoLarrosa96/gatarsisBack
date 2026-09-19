@@ -82,6 +82,12 @@ Todas las rutas bajo `/api/v1/admin/**` quedan protegidas por defecto, salvo log
 
 Ambos endpoints son exclusivamente de lectura y no exponen hashes, sesiones ni datos de autenticación.
 
+## Adopciones
+
+`GET /api/v1/adoptions/cats` publica únicamente gatos habilitados con estado `AVAILABLE` o `RESERVED`, ordenados por `displayOrder`. Las imágenes son URLs HTTPS externas; el backend no sube ni transforma archivos. El formulario existente `POST /api/v1/adoptions/applications` acepta opcionalmente `adoptableCatId`; sin ese campo conserva el flujo general, y con él valida que el gato exista, esté publicado y `AVAILABLE` antes de guardar la solicitud y enviar el email.
+
+El admin autenticado administra el catálogo mediante `/api/v1/admin/adoptions/cats`, sus acciones `publish`, `pause`, `reserve` y `adopt`, y consulta solicitudes en `/api/v1/admin/adoptions/applications`. Las solicitudes mantienen una FK `RESTRICT` hacia el gato para preservar su interés histórico; no existe eliminación pública ni administrativa de gatos.
+
 ## Fuera de esta fase
 
 Panel/admin y auth, cuentas de comprador, carrito persistido, envío, descuentos, Redis, WebSockets y colas. La resolución operativa de `REQUIRES_REVIEW` y refunds queda para Fase 3.

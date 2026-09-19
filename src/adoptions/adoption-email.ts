@@ -40,7 +40,11 @@ export const escapeHtml = (value: string): string =>
 
 const sectionsFor = (
   application: CreateAdoptionApplicationDto,
+  catName?: string,
 ): readonly EmailSection[] => [
+  ...(catName
+    ? [{ title: "INTERÉS EN", rows: [["Michi", catName] as EmailRow] }]
+    : []),
   {
     title: "CONTACTO",
     rows: [
@@ -134,8 +138,9 @@ const sectionsFor = (
 
 export const renderAdoptionEmail = (
   application: CreateAdoptionApplicationDto,
+  catName?: string,
 ): { html: string; text: string } => {
-  const sections = sectionsFor(application);
+  const sections = sectionsFor(application, catName);
   const text = [
     "NUEVA SOLICITUD DE ADOPCIÓN",
     "",

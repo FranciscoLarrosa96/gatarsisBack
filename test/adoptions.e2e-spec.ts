@@ -5,7 +5,9 @@ import request = require("supertest");
 import { ADOPTION_MAIL_TRANSPORT } from "../src/adoptions/adoption.config";
 import { HomeSafetyStatus, HousingType } from "../src/adoptions/adoption.dto";
 import { AdoptionMailTransport } from "../src/adoptions/adoption-mail.transport";
-import { AdoptionsModule } from "../src/adoptions/adoptions.module";
+import { DataSource } from "typeorm";
+import { AppModule } from "../src/app.module";
+import { MERCADO_PAGO_GATEWAY } from "../src/payments/mercado-pago.gateway";
 
 class FakeTransport implements AdoptionMailTransport {
   readonly messages: SendMailOptions[] = [];
@@ -21,6 +23,7 @@ class FakeTransport implements AdoptionMailTransport {
 describe("adoption applications (e2e)", () => {
   let app: INestApplication;
   let transport: FakeTransport;
+  let ds: DataSource;
   let ipCounter = 1;
 
   beforeAll(async () => {
@@ -35,10 +38,20 @@ describe("adoption applications (e2e)", () => {
 
     transport = new FakeTransport();
     const module = await Test.createTestingModule({
-      imports: [AdoptionsModule],
+      imports: [AppModule],
     })
       .overrideProvider(ADOPTION_MAIL_TRANSPORT)
       .useValue(transport)
+      .overrideProvider(MERCADO_PAGO_GATEWAY)
+      .useValue({
+        createPreference: jest.fn(),
+        searchPreferencesByExternalReference: jest.fn(),
+        getPayment: jest.fn(),
+        searchPaymentsByExternalReference: jest.fn(),
+        refundPayment: jest.fn(),
+        listRefunds: jest.fn(),
+        validateWebhookSignature: jest.fn(),
+      })
       .compile();
 
     app = module.createNestApplication();
@@ -52,6 +65,8 @@ describe("adoption applications (e2e)", () => {
       }),
     );
     await app.init();
+    ds = app.get(DataSource);
+    await ds.runMigrations();
   });
 
   afterAll(async () => {
@@ -59,7 +74,10 @@ describe("adoption applications (e2e)", () => {
     await app.close();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await ds.query(
+      "TRUNCATE adoption_applications, adoptable_cats, raffle_numbers, raffle_purchases, raffles, admin_audit_logs, admin_sessions, admin_users, refund_operations, webhook_events, inventory_movements, payments, payment_preferences, order_fulfillments, order_items, orders, inventory, product_media, product_variants, products RESTART IDENTITY CASCADE",
+    );
     transport.messages.length = 0;
     transport.error = null;
   });

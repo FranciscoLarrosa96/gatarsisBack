@@ -30,6 +30,9 @@ import { Raffle } from "../raffles/entities/raffle.entity";
 import { RaffleNumber } from "../raffles/entities/raffle-number.entity";
 import { RafflePurchase } from "../raffles/entities/raffle-purchase.entity";
 import { OneActiveRaffle1767312000000 } from "../database/migrations/1767312000000-OneActiveRaffle";
+import { AdoptableCats1767398400000 } from "../database/migrations/1767398400000-AdoptableCats";
+import { AdoptableCat } from "../adoptions/entities/adoptable-cat.entity";
+import { AdoptionApplication } from "../adoptions/entities/adoption-application.entity";
 
 const numberFromEnv = (name: string, fallback: number): number => {
   const value = Number(process.env[name] ?? fallback);
@@ -112,6 +115,8 @@ const dataSourceOptions = (): DataSourceOptions => ({
     Raffle,
     RafflePurchase,
     RaffleNumber,
+    AdoptableCat,
+    AdoptionApplication,
   ],
   synchronize: false,
   migrations: [
@@ -127,6 +132,7 @@ const dataSourceOptions = (): DataSourceOptions => ({
     VariantAttributes1767139200000,
     RafflesFoundation1767225600000,
     OneActiveRaffle1767312000000,
+    AdoptableCats1767398400000,
   ],
 });
 
