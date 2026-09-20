@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import { AdminRequest } from "../admin/admin-auth.guard";
 import {
+  CreateManualRaffleSaleDto,
   CreateRaffleDto,
   DrawRaffleDto,
   RaffleListDto,
@@ -26,6 +27,15 @@ export class AdminRafflesController {
   @Post()
   create(@Body() dto: CreateRaffleDto, @Req() request: AdminRequest) {
     return this.raffles.create(dto, request.admin!.id);
+  }
+
+  @Post(":id/manual-sales")
+  manualSale(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body() dto: CreateManualRaffleSaleDto,
+    @Req() request: AdminRequest,
+  ) {
+    return this.raffles.manualSale(id, dto, request.admin!.id);
   }
 
   @Get()

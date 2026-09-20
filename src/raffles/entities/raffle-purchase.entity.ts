@@ -15,6 +15,12 @@ import { Order } from "../../orders/entities/order.entity";
 import { Raffle } from "./raffle.entity";
 import { RaffleNumber } from "./raffle-number.entity";
 
+export enum ManualRafflePaymentMethod {
+  CASH = "CASH",
+  TRANSFER = "TRANSFER",
+  OTHER = "OTHER",
+}
+
 @Entity({ name: "raffle_purchases" })
 @Index("IDX_raffle_purchases_raffle_created_at", ["raffleId", "createdAt"])
 @Index("IDX_raffle_purchases_buyer_email_created_at", [
@@ -36,12 +42,21 @@ export class RafflePurchase {
   order!: Order;
   @Column({ name: "buyer_name", type: "varchar", length: 160 })
   buyerName!: string;
-  @Column({ name: "buyer_email", type: "varchar", length: 320 })
-  buyerEmail!: string;
-  @Column({ name: "buyer_phone", type: "varchar", length: 80 })
-  buyerPhone!: string;
+  @Column({ name: "buyer_email", type: "varchar", length: 320, nullable: true })
+  buyerEmail!: string | null;
+  @Column({ name: "buyer_phone", type: "varchar", length: 80, nullable: true })
+  buyerPhone!: string | null;
   @Column({ name: "unit_price_in_cents", type: "integer" })
   unitPriceInCents!: number;
+  @Column({
+    name: "manual_payment_method",
+    type: "enum",
+    enum: ManualRafflePaymentMethod,
+    nullable: true,
+  })
+  manualPaymentMethod!: ManualRafflePaymentMethod | null;
+  @Column({ name: "manual_payment_note", type: "varchar", length: 500, nullable: true })
+  manualPaymentNote!: string | null;
   @OneToMany(() => RaffleNumber, (number) => number.rafflePurchase)
   numbers!: RaffleNumber[];
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })

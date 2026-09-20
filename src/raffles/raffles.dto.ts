@@ -1,5 +1,11 @@
 import { Transform, Type } from "class-transformer";
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
+  IsEmail,
+  IsEnum,
   IsInt,
   IsISO8601,
   IsOptional,
@@ -8,7 +14,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from "class-validator";
+import { ManualRafflePaymentMethod } from "./entities/raffle-purchase.entity";
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim() : value;
@@ -110,3 +118,56 @@ export class DrawRaffleDto {
 }
 
 export class RafflePurchasesListDto extends RaffleListDto {}
+
+export class ManualRaffleBuyerDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(160)
+  name!: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === "string" ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  @MaxLength(320)
+  email?: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MinLength(6)
+  @MaxLength(80)
+  whatsapp?: string;
+}
+
+export class CreateManualRaffleSaleDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(99, { each: true })
+  numbers!: number[];
+
+  @ValidateNested()
+  @Type(() => ManualRaffleBuyerDto)
+  buyer!: ManualRaffleBuyerDto;
+
+  @IsEnum(ManualRafflePaymentMethod)
+  paymentMethod!: ManualRafflePaymentMethod;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(8)
+  @MaxLength(200)
+  idempotencyKey!: string;
+}

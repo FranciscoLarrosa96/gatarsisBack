@@ -31,6 +31,7 @@ import { RaffleNumber } from "../raffles/entities/raffle-number.entity";
 import { RafflePurchase } from "../raffles/entities/raffle-purchase.entity";
 import { OneActiveRaffle1767312000000 } from "../database/migrations/1767312000000-OneActiveRaffle";
 import { AdoptableCats1767398400000 } from "../database/migrations/1767398400000-AdoptableCats";
+import { ManualRaffleSales1767484800000 } from "../database/migrations/1767484800000-ManualRaffleSales";
 import { AdoptableCat } from "../adoptions/entities/adoptable-cat.entity";
 import { AdoptionApplication } from "../adoptions/entities/adoption-application.entity";
 
@@ -133,6 +134,7 @@ const dataSourceOptions = (): DataSourceOptions => ({
     RafflesFoundation1767225600000,
     OneActiveRaffle1767312000000,
     AdoptableCats1767398400000,
+    ManualRaffleSales1767484800000,
   ],
 });
 

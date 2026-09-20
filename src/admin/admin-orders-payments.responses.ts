@@ -6,7 +6,9 @@ import { PaymentPreference } from "../payments/entities/payment-preference.entit
 
 export type AdminOrderListItem = {
   id: string;
+  kind: string;
   status: string;
+  paymentSource: string;
   totalInCents: number;
   itemsCount: number;
   createdAt: Date;
@@ -38,7 +40,9 @@ export const toAdminOrderListItem = (
   itemsCount: number,
 ): AdminOrderListItem => ({
   id: order.id,
+  kind: order.kind,
   status: order.status,
+  paymentSource: order.paymentSource,
   totalInCents: order.totalInCents,
   itemsCount,
   createdAt: order.createdAt,

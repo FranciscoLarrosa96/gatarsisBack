@@ -1,8 +1,14 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { createHash } from "crypto";
 import { DataSource, EntityManager, In, QueryFailedError } from "typeorm";
 import { AdminAuditLog } from "../admin/entities/admin-audit-log.entity";
 import { DomainError } from "../common/domain-error";
-import { Order, OrderStatus } from "../orders/entities/order.entity";
+import {
+  Order,
+  OrderKind,
+  OrderPaymentSource,
+  OrderStatus,
+} from "../orders/entities/order.entity";
 import {
   Payment,
   PaymentProcessingStatus,
@@ -16,11 +22,13 @@ import {
 import { Raffle, RaffleStatus } from "./entities/raffle.entity";
 import { RafflePurchase } from "./entities/raffle-purchase.entity";
 import {
+  CreateManualRaffleSaleDto,
   CreateRaffleDto,
   RaffleListDto,
   RafflePurchasesListDto,
   UpdateRaffleDto,
 } from "./raffles.dto";
+import { raffleReservationConfig } from "./raffle.config";
 
 type NumberSummaryRow = {
   total: string;
@@ -66,7 +74,8 @@ export class RafflesService {
       | "RAFFLE_PAUSED"
       | "RAFFLE_RESUMED"
       | "RAFFLE_CLOSED"
-      | "RAFFLE_DRAWN",
+      | "RAFFLE_DRAWN"
+      | "manual_raffle_sale_created",
     raffleId: string,
     metadata: Record<string, unknown>,
   ) {
@@ -110,6 +119,160 @@ export class RafflesService {
       });
       return raffle;
     });
+  }
+
+  async manualSale(
+    raffleId: string,
+    dto: CreateManualRaffleSaleDto,
+    adminId: string,
+  ) {
+    const numbers = [...dto.numbers].sort((a, b) => a - b);
+    if (numbers.length > raffleReservationConfig().maxNumbersPerPurchase)
+      throw new DomainError(
+        "RAFFLE_TOO_MANY_NUMBERS",
+        "La cantidad de números supera el máximo permitido por compra.",
+        undefined,
+        400,
+      );
+
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          raffleId,
+          numbers,
+          buyer: {
+            name: dto.buyer.name,
+            email: dto.buyer.email ?? null,
+            whatsapp: dto.buyer.whatsapp ?? null,
+          },
+          paymentMethod: dto.paymentMethod,
+          note: dto.note ?? null,
+        }),
+      )
+      .digest("hex");
+    const existing = await this.dataSource
+      .getRepository(Order)
+      .findOneBy({ idempotencyKey: dto.idempotencyKey });
+    if (existing)
+      return this.manualSaleResponseOrConflict(existing, raffleId, fingerprint);
+
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        await manager.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [`raffle-manual-sale:${dto.idempotencyKey}`],
+        );
+        const duplicate = await manager.findOneBy(Order, {
+          idempotencyKey: dto.idempotencyKey,
+        });
+        if (duplicate)
+          return this.manualSaleResponseOrConflict(
+            duplicate,
+            raffleId,
+            fingerprint,
+            manager,
+          );
+
+        const raffle = await this.lockRaffle(manager, raffleId);
+        if (raffle.status !== RaffleStatus.ACTIVE)
+          throw new DomainError(
+            "RAFFLE_NOT_ACTIVE",
+            "La rifa no está activa.",
+            undefined,
+            409,
+          );
+
+        const selected = await manager
+          .getRepository(RaffleNumber)
+          .createQueryBuilder("number")
+          .setLock("pessimistic_write")
+          .where("number.raffle_id = :raffleId", { raffleId })
+          .andWhere("number.number IN (:...numbers)", { numbers })
+          .orderBy("number.number", "ASC")
+          .getMany();
+        const allAvailable =
+          selected.length === numbers.length &&
+          selected.every(
+            (number, index) =>
+              number.number === numbers[index] &&
+              number.status === RaffleNumberStatus.AVAILABLE &&
+              number.rafflePurchaseId === null,
+          );
+        if (!allAvailable)
+          throw new DomainError(
+            "RAFFLE_NUMBER_UNAVAILABLE",
+            "Uno o más números ya no están disponibles.",
+            undefined,
+            409,
+          );
+
+        const now = new Date();
+        const totalInCents = raffle.priceInCents * numbers.length;
+        const order = await manager.save(Order, {
+          kind: OrderKind.RAFFLE,
+          status: OrderStatus.PAID,
+          paymentSource: OrderPaymentSource.MANUAL,
+          idempotencyKey: dto.idempotencyKey,
+          requestFingerprint: fingerprint,
+          subtotalInCents: totalInCents,
+          totalInCents,
+          reservationExpiresAt: now,
+          paidAt: now,
+        });
+        const purchase = await manager.save(RafflePurchase, {
+          raffleId,
+          orderId: order.id,
+          buyerName: dto.buyer.name,
+          buyerEmail: dto.buyer.email ?? null,
+          buyerPhone: dto.buyer.whatsapp ?? null,
+          unitPriceInCents: raffle.priceInCents,
+          manualPaymentMethod: dto.paymentMethod,
+          manualPaymentNote: dto.note ?? null,
+        });
+        for (const raffleNumber of selected) {
+          raffleNumber.status = RaffleNumberStatus.SOLD;
+          raffleNumber.rafflePurchaseId = purchase.id;
+          raffleNumber.reservedAt = null;
+          raffleNumber.reservedUntil = null;
+          raffleNumber.soldAt = now;
+        }
+        await manager.save(selected);
+        await this.audit(
+          manager,
+          adminId,
+          "manual_raffle_sale_created",
+          raffleId,
+          {
+            raffleId,
+            rafflePurchaseId: purchase.id,
+            orderId: order.id,
+            numbers,
+            amountInCents: totalInCents,
+            paymentMethod: dto.paymentMethod,
+          },
+        );
+        return this.manualSaleView(order, purchase, numbers);
+      });
+    } catch (error) {
+      const driverError = (
+        error as { driverError?: { code?: string; constraint?: string } }
+      ).driverError;
+      if (
+        error instanceof QueryFailedError &&
+        driverError?.code === "23505"
+      ) {
+        const raced = await this.dataSource
+          .getRepository(Order)
+          .findOneBy({ idempotencyKey: dto.idempotencyKey });
+        if (raced)
+          return this.manualSaleResponseOrConflict(
+            raced,
+            raffleId,
+            fingerprint,
+          );
+      }
+      throw error;
+    }
   }
 
   async list(query: RaffleListDto) {
@@ -610,12 +773,74 @@ export class RafflesService {
         status: this.purchaseStatus(order, payment),
         orderId: order.id,
         orderStatus: order.status,
+        paymentSource: order.paymentSource,
+        manualPaymentMethod: purchase.manualPaymentMethod,
+        manualPaymentNote: purchase.manualPaymentNote,
         payment: payment ? this.paymentView(payment) : null,
         createdAt: purchase.createdAt,
         reservationExpiresAt: order.reservationExpiresAt,
         paidAt: order.paidAt,
       };
     });
+  }
+
+  private async manualSaleResponseOrConflict(
+    order: Order,
+    raffleId: string,
+    fingerprint: string,
+    manager: EntityManager = this.dataSource.manager,
+  ) {
+    if (
+      order.kind !== OrderKind.RAFFLE ||
+      order.paymentSource !== OrderPaymentSource.MANUAL ||
+      order.requestFingerprint !== fingerprint
+    )
+      throw new DomainError(
+        "IDEMPOTENCY_CONFLICT",
+        "La clave de idempotencia ya fue usada con otros datos.",
+        undefined,
+        409,
+      );
+    const purchase = await manager.findOneBy(RafflePurchase, {
+      orderId: order.id,
+      raffleId,
+    });
+    if (!purchase)
+      throw new DomainError(
+        "IDEMPOTENCY_CONFLICT",
+        "La clave de idempotencia pertenece a otra operación.",
+        undefined,
+        409,
+      );
+    const soldNumbers = await manager.find(RaffleNumber, {
+      where: { rafflePurchaseId: purchase.id },
+      order: { number: "ASC" },
+    });
+    return this.manualSaleView(
+      order,
+      purchase,
+      soldNumbers.map((item) => item.number),
+    );
+  }
+
+  private manualSaleView(
+    order: Order,
+    purchase: RafflePurchase,
+    numbers: number[],
+  ) {
+    return {
+      rafflePurchaseId: purchase.id,
+      raffleId: purchase.raffleId,
+      orderId: order.id,
+      numbers,
+      unitPriceInCents: purchase.unitPriceInCents,
+      totalInCents: order.totalInCents,
+      status: order.status,
+      paymentSource: order.paymentSource,
+      paymentMethod: purchase.manualPaymentMethod,
+      note: purchase.manualPaymentNote,
+      paidAt: order.paidAt,
+    };
   }
 
   private async latestPaymentByOrder(orderIds: string[]) {
