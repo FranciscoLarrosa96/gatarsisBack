@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -55,6 +57,15 @@ export class AdminRafflesController {
     @Req() request: AdminRequest,
   ) {
     return this.raffles.update(id, dto, request.admin!.id);
+  }
+
+  @Delete(":id")
+  @HttpCode(204)
+  async remove(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Req() request: AdminRequest,
+  ) {
+    await this.raffles.remove(id, request.admin!.id);
   }
 
   @Post(":id/publish")

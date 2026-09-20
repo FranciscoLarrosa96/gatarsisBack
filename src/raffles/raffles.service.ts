@@ -3,6 +3,9 @@ import { createHash } from "crypto";
 import { DataSource, EntityManager, In, QueryFailedError } from "typeorm";
 import { AdminAuditLog } from "../admin/entities/admin-audit-log.entity";
 import { DomainError } from "../common/domain-error";
+import { InventoryMovement } from "../inventory/entities/inventory-movement.entity";
+import { OrderFulfillment } from "../orders/entities/order-fulfillment.entity";
+import { OrderItem } from "../orders/entities/order-item.entity";
 import {
   Order,
   OrderKind,
@@ -13,7 +16,10 @@ import {
   Payment,
   PaymentProcessingStatus,
 } from "../payments/entities/payment.entity";
-import { PaymentPreference } from "../payments/entities/payment-preference.entity";
+import {
+  PaymentPreference,
+  PaymentPreferenceStatus,
+} from "../payments/entities/payment-preference.entity";
 import { RefundOperation } from "../payments/entities/refund-operation.entity";
 import {
   RaffleNumber,
@@ -96,6 +102,7 @@ export class RafflesService {
       | "RAFFLE_RESUMED"
       | "RAFFLE_CLOSED"
       | "RAFFLE_DRAWN"
+      | "RAFFLE_DELETED"
       | "manual_raffle_sale_created",
     raffleId: string,
     metadata: Record<string, unknown>,
@@ -451,6 +458,132 @@ export class RafflesService {
         });
       }
       return this.raffleView(raffle);
+    });
+  }
+
+  async remove(id: string, adminId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const raffle = await this.lockRaffle(manager, id);
+      const purchases = await manager
+        .getRepository(RafflePurchase)
+        .createQueryBuilder("purchase")
+        .setLock("pessimistic_write")
+        .where("purchase.raffle_id = :id", { id })
+        .orderBy("purchase.id", "ASC")
+        .getMany();
+      const orderIds = purchases.map((purchase) => purchase.orderId);
+      const orders = orderIds.length
+        ? await manager
+            .getRepository(Order)
+            .createQueryBuilder("order")
+            .setLock("pessimistic_write")
+            .where("order.id IN (:...orderIds)", { orderIds })
+            .orderBy("order.id", "ASC")
+            .getMany()
+        : [];
+      const numbers = await manager
+        .getRepository(RaffleNumber)
+        .createQueryBuilder("number")
+        .setLock("pessimistic_write")
+        .where("number.raffle_id = :id", { id })
+        .orderBy("number.number", "ASC")
+        .getMany();
+
+      let payments = 0;
+      let refunds = 0;
+      let preferences: PaymentPreference[] = [];
+      let fulfillments = 0;
+      let items = 0;
+      let movements = 0;
+      if (orderIds.length) {
+        payments = await manager.countBy(Payment, { orderId: In(orderIds) });
+        refunds = await manager.countBy(RefundOperation, {
+          orderId: In(orderIds),
+        });
+        preferences = await manager.find(PaymentPreference, {
+          where: { orderId: In(orderIds) },
+        });
+        fulfillments = await manager.countBy(OrderFulfillment, {
+          orderId: In(orderIds),
+        });
+        items = await manager.countBy(OrderItem, { orderId: In(orderIds) });
+        movements = await manager.countBy(InventoryMovement, {
+          orderId: In(orderIds),
+        });
+      }
+      const now = new Date();
+      const reasons: string[] = [];
+      if (
+        raffle.status === RaffleStatus.DRAWN ||
+        raffle.winningNumber !== null ||
+        raffle.drawnAt !== null
+      )
+        reasons.push("DRAW_HISTORY");
+      if (numbers.some((number) => number.status === RaffleNumberStatus.SOLD))
+        reasons.push("SOLD_NUMBERS");
+      if (
+        numbers.some(
+          (number) =>
+            number.status === RaffleNumberStatus.RESERVED &&
+            (!number.reservedUntil || number.reservedUntil > now),
+        )
+      )
+        reasons.push("ACTIVE_RESERVATIONS");
+      if (
+        orders.some(
+          (order) =>
+            order.status === OrderStatus.PAID ||
+            order.status === OrderStatus.REFUNDED,
+        )
+      )
+        reasons.push("TERMINAL_PAID_ORDERS");
+      if (
+        orders.some(
+          (order) =>
+            order.status === OrderStatus.PAYMENT_PENDING ||
+            (order.status === OrderStatus.AWAITING_PAYMENT &&
+              order.reservationExpiresAt > now),
+        )
+      )
+        reasons.push("ACTIVE_ORDERS");
+      if (payments) reasons.push("PAYMENTS");
+      if (refunds) reasons.push("REFUNDS");
+      if (
+        preferences.some(
+          (preference) =>
+            preference.providerPreferenceId !== null ||
+            ![
+              PaymentPreferenceStatus.FAILED,
+              PaymentPreferenceStatus.EXPIRED,
+            ].includes(preference.status),
+        )
+      )
+        reasons.push("ACTIVE_PAYMENT_PREFERENCES");
+      if (fulfillments || items || movements)
+        reasons.push("ORDER_OPERATIONAL_ACTIVITY");
+
+      if (reasons.length)
+        throw new DomainError(
+          "RAFFLE_DELETE_NOT_ALLOWED",
+          "La rifa tiene ventas, pagos o actividad asociada y no puede eliminarse.",
+          { reasons },
+          409,
+        );
+
+      if (orderIds.length) {
+        await manager.delete(PaymentPreference, { orderId: In(orderIds) });
+      }
+      await manager.delete(RaffleNumber, { raffleId: id });
+      if (purchases.length)
+        await manager.delete(RafflePurchase, { id: In(purchases.map((item) => item.id)) });
+      if (orderIds.length) await manager.delete(Order, { id: In(orderIds) });
+      await manager.delete(Raffle, { id });
+      await this.audit(manager, adminId, "RAFFLE_DELETED", id, {
+        raffleId: id,
+        removedNumbers: numbers.length,
+        removedPurchases: purchases.length,
+        removedOrders: orderIds.length,
+      });
     });
   }
 
