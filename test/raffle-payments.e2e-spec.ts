@@ -122,7 +122,7 @@ describe("raffle payments R4 (PostgreSQL)", () => {
         title: "Rifa Gatarsis",
         prizeName: "Una bicicleta",
         description: null,
-        imageUrl: "https://res.cloudinary.com/demo/image/upload/prize.jpg",
+        imageUrls: ["https://res.cloudinary.com/demo/image/upload/prize.jpg"],
         priceInCents: 50_000,
         status: RaffleStatus.ACTIVE,
         drawAt: null,

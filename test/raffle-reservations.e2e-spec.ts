@@ -67,7 +67,7 @@ describe("public raffle reservations R3 (PostgreSQL)", () => {
         title: "Rifa solidaria",
         prizeName: "Premio",
         description: null,
-        imageUrl: null,
+        imageUrls: [],
         priceInCents,
         status,
         drawAt: null,

@@ -15,6 +15,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
 } from "class-validator";
 import { ManualRafflePaymentMethod } from "./entities/raffle-purchase.entity";
 
@@ -45,6 +46,13 @@ export class CreateRaffleDto {
   @IsString()
   @MaxLength(2_048)
   imageUrl?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsString({ each: true })
+  @MaxLength(2_048, { each: true })
+  imageUrls?: string[];
 
   @Type(() => Number)
   @IsInt()
@@ -82,6 +90,13 @@ export class UpdateRaffleDto {
   @IsString()
   @MaxLength(2_048)
   imageUrl?: string | null;
+
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsString({ each: true })
+  @MaxLength(2_048, { each: true })
+  imageUrls?: string[];
 
   @IsOptional()
   @Type(() => Number)

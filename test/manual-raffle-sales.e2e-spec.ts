@@ -97,7 +97,7 @@ describe("admin manual raffle sales (PostgreSQL)", () => {
         title: "Rifa manual",
         prizeName: "Premio",
         description: null,
-        imageUrl: null,
+        imageUrls: [],
         priceInCents,
         status,
         drawAt: null,

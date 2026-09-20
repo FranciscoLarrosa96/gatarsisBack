@@ -47,21 +47,42 @@ type FinancialSummaryRow = {
 export class RafflesService {
   constructor(private readonly dataSource: DataSource) {}
 
-  private imageUrl(value: string | null | undefined): string | null {
-    if (value === undefined || value === null || value === "") return null;
-    try {
-      const parsed = new URL(value);
-      if (parsed.protocol !== "https:" || !parsed.hostname)
-        throw new Error("HTTPS_REQUIRED");
-      return parsed.toString();
-    } catch {
+  private imageUrls(
+    values: string[] | undefined,
+    legacyValue?: string | null,
+  ): string[] {
+    const source = values ?? (legacyValue ? [legacyValue] : []);
+    if (source.length > 8)
       throw new DomainError(
-        "RAFFLE_INVALID_IMAGE_URL",
-        "La imagen debe ser una URL HTTPS válida.",
+        "RAFFLE_IMAGE_LIMIT_EXCEEDED",
+        "La rifa admite hasta 8 imágenes.",
         undefined,
         400,
       );
+    const normalized: string[] = [];
+    for (const value of source) {
+      try {
+        const trimmed = value.trim();
+        if (!trimmed) throw new Error("EMPTY_URL");
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== "https:" || !parsed.hostname)
+          throw new Error("HTTPS_REQUIRED");
+        const url = parsed.toString();
+        if (!normalized.includes(url)) normalized.push(url);
+      } catch {
+        throw new DomainError(
+          "RAFFLE_INVALID_IMAGE_URL",
+          "Cada imagen debe ser una URL HTTPS válida.",
+          undefined,
+          400,
+        );
+      }
     }
+    return normalized;
+  }
+
+  private raffleView<T extends Raffle>(raffle: T) {
+    return { ...raffle, imageUrl: raffle.imageUrls[0] ?? null };
   }
 
   private audit(
@@ -94,7 +115,7 @@ export class RafflesService {
         title: dto.title,
         prizeName: dto.prizeName,
         description: dto.description || null,
-        imageUrl: this.imageUrl(dto.imageUrl),
+        imageUrls: this.imageUrls(dto.imageUrls, dto.imageUrl),
         priceInCents: dto.priceInCents,
         status: RaffleStatus.DRAFT,
         drawAt: dto.drawAt ? new Date(dto.drawAt) : null,
@@ -117,7 +138,7 @@ export class RafflesService {
       await this.audit(manager, adminId, "RAFFLE_CREATED", raffle.id, {
         numberCount: 100,
       });
-      return raffle;
+      return this.raffleView(raffle);
     });
   }
 
@@ -285,7 +306,7 @@ export class RafflesService {
           id: true,
           title: true,
           prizeName: true,
-          imageUrl: true,
+          imageUrls: true,
           priceInCents: true,
           status: true,
           drawAt: true,
@@ -296,7 +317,12 @@ export class RafflesService {
         skip: (page - 1) * pageSize,
         take: pageSize,
       });
-    return { items, page, pageSize, total };
+    return {
+      items: items.map((item) => this.raffleView(item)),
+      page,
+      pageSize,
+      total,
+    };
   }
 
   async detail(id: string) {
@@ -366,7 +392,7 @@ export class RafflesService {
       revenueInCents: Number(financial?.revenueInCents ?? 0),
     };
     return {
-      ...raffle,
+      ...this.raffleView(raffle),
       numberSummary: {
         total: counts.totalNumbers,
         available: counts.available,
@@ -397,22 +423,22 @@ export class RafflesService {
           "Sólo se puede editar una rifa en borrador.",
         );
 
-      const changedFields = (
-        [
-          "title",
-          "prizeName",
-          "description",
-          "imageUrl",
-          "priceInCents",
-          "drawAt",
-        ] as const
+      const changedFields: string[] = (
+        ["title", "prizeName", "description"] as const
       ).filter((field) => dto[field] !== undefined);
+      if (dto.imageUrls !== undefined || dto.imageUrl !== undefined)
+        changedFields.push("imageUrls");
+      changedFields.push(
+        ...(["priceInCents", "drawAt"] as const).filter(
+          (field) => dto[field] !== undefined,
+        ),
+      );
       if (dto.title !== undefined) raffle.title = dto.title;
       if (dto.prizeName !== undefined) raffle.prizeName = dto.prizeName;
       if (dto.description !== undefined)
         raffle.description = dto.description || null;
-      if (dto.imageUrl !== undefined)
-        raffle.imageUrl = this.imageUrl(dto.imageUrl);
+      if (dto.imageUrls !== undefined || dto.imageUrl !== undefined)
+        raffle.imageUrls = this.imageUrls(dto.imageUrls, dto.imageUrl);
       if (dto.priceInCents !== undefined)
         raffle.priceInCents = dto.priceInCents;
       if (dto.drawAt !== undefined)
@@ -424,7 +450,7 @@ export class RafflesService {
           changedFields,
         });
       }
-      return raffle;
+      return this.raffleView(raffle);
     });
   }
 
@@ -466,7 +492,7 @@ export class RafflesService {
             "RAFFLE_PUBLISH_NOT_ALLOWED",
             "La rifa no cumple las condiciones para publicarse.",
           );
-        if (raffle.imageUrl) this.imageUrl(raffle.imageUrl);
+        this.imageUrls(raffle.imageUrls);
         return this.applyTransition(
           manager,
           raffle,
@@ -623,7 +649,7 @@ export class RafflesService {
         newStatus: raffle.status,
         winningNumber,
       });
-      return raffle;
+      return this.raffleView(raffle);
     });
   }
 
@@ -925,7 +951,7 @@ export class RafflesService {
       previousStatus,
       newStatus: raffle.status,
     });
-    return raffle;
+    return this.raffleView(raffle);
   }
 
   private translateSingleActiveViolation(error: unknown): never {

@@ -35,8 +35,8 @@ export class Raffle {
   @Column({ name: "prize_name", type: "varchar", length: 160 })
   prizeName!: string;
   @Column({ type: "text", nullable: true }) description!: string | null;
-  @Column({ name: "image_url", type: "text", nullable: true })
-  imageUrl!: string | null;
+  @Column({ name: "image_urls", type: "jsonb", default: () => "'[]'::jsonb" })
+  imageUrls!: string[];
   @Column({ name: "price_in_cents", type: "integer" })
   priceInCents!: number;
   @Column({ type: "enum", enum: RaffleStatus, default: RaffleStatus.DRAFT })

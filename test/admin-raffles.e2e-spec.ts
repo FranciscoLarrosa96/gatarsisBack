@@ -336,7 +336,7 @@ describe("admin raffle R2 foundation (PostgreSQL)", () => {
     expect(audit.metadata?.changedFields).toEqual([
       "title",
       "description",
-      "imageUrl",
+      "imageUrls",
       "priceInCents",
       "drawAt",
     ]);
@@ -362,6 +362,9 @@ describe("admin raffle R2 foundation (PostgreSQL)", () => {
     expect(response.body.imageUrl).toBe(
       "https://res.cloudinary.com/demo/image/upload/sample.jpg",
     );
+    expect(response.body.imageUrls).toEqual([
+      "https://res.cloudinary.com/demo/image/upload/sample.jpg",
+    ]);
   });
 
   it.each([
