@@ -27,6 +27,7 @@ import {
 } from "../src/raffles/entities/raffle-number.entity";
 import { RafflePurchase } from "../src/raffles/entities/raffle-purchase.entity";
 import { Raffle, RaffleStatus } from "../src/raffles/entities/raffle.entity";
+import { RaffleDrawMethod } from "../src/raffles/raffles.dto";
 
 describe("admin raffle lifecycle R5 (PostgreSQL)", () => {
   let app: INestApplication;
@@ -672,6 +673,206 @@ describe("admin raffle lifecycle R5 (PostgreSQL)", () => {
         response.body.items.map((item: { status: string }) => item.status),
       ),
     ).toEqual(new Set(["PAYMENT_PENDING", "REQUIRES_REVIEW", "EXPIRED"]));
+  });
+
+  it("reports backend-owned draw readiness and privacy-safe eligible participants", async () => {
+    const raffle = await active();
+    const paid = await reserve(raffle.id, [7, 12]);
+    await settle(paid.order);
+    await action(raffle.id, "close").expect(201);
+
+    const readiness = await request(app.getHttpServer())
+      .get(`/api/v1/admin/raffles/${raffle.id}/draw-readiness`)
+      .set(auth())
+      .expect(200);
+    expect(readiness.body).toMatchObject({
+      canDraw: true,
+      blockers: [],
+      totalNumbers: 100,
+      eligibleCount: 2,
+      eligibleNumbers: [7, 12],
+      revenueInCents: 100_000,
+      participants: [
+        { number: 7, buyerName: "Buyer 7-12" },
+        { number: 12, buyerName: "Buyer 7-12" },
+      ],
+      result: null,
+    });
+    expect(JSON.stringify(readiness.body)).not.toContain("@buyer.test");
+    expect(JSON.stringify(readiness.body)).not.toContain("+54 249");
+  });
+
+  it("reports pending blockers and refuses AUTOMATIC until reservations resolve", async () => {
+    const raffle = await active();
+    await reserve(raffle.id, [31]);
+    await action(raffle.id, "close").expect(201);
+    const readiness = await request(app.getHttpServer())
+      .get(`/api/v1/admin/raffles/${raffle.id}/draw-readiness`)
+      .set(auth())
+      .expect(200);
+    expect(readiness.body).toMatchObject({
+      canDraw: false,
+      eligibleCount: 0,
+    });
+    expect(readiness.body.blockers).toEqual(
+      expect.arrayContaining([
+        { code: "RAFFLE_RESERVED_NUMBERS_PENDING", count: 1 },
+        { code: "RAFFLE_PAYMENTS_PENDING", count: 1 },
+        { code: "RAFFLE_NO_ELIGIBLE_PARTICIPANTS" },
+      ]),
+    );
+    expect(
+      (
+        await action(raffle.id, "draw")
+          .send({ method: RaffleDrawMethod.AUTOMATIC })
+          .expect(409)
+      ).body.code,
+    ).toBe("RAFFLE_DRAW_NOT_ALLOWED");
+    expect(
+      await ds.getRepository(AdminAuditLog).countBy({
+        action: "RAFFLE_DRAWN",
+        entityId: raffle.id,
+      }),
+    ).toBe(0);
+  });
+
+  it("draws AUTOMATIC on the existing endpoint and persists the backend-selected result", async () => {
+    const raffle = await active();
+    const paid = await reserve(raffle.id, [47]);
+    await settle(paid.order);
+    await action(raffle.id, "close").expect(201);
+
+    const response = await action(raffle.id, "draw")
+      .send({ method: RaffleDrawMethod.AUTOMATIC })
+      .expect(201);
+    expect(response.body).toMatchObject({
+      status: RaffleStatus.DRAWN,
+      winningNumber: 47,
+      drawMethod: RaffleDrawMethod.AUTOMATIC,
+      eligibleCount: 1,
+      winner: { number: 47, buyerName: "Buyer 47" },
+      drawnByAdminId: adminId,
+    });
+    const audit = await ds.getRepository(AdminAuditLog).findOneByOrFail({
+      action: "RAFFLE_DRAWN",
+      entityId: raffle.id,
+    });
+    expect(audit.metadata).toMatchObject({
+      drawMethod: RaffleDrawMethod.AUTOMATIC,
+      winningNumber: 47,
+      eligibleCount: 1,
+      eligibleNumbers: [47],
+    });
+    expect(audit.metadata).not.toHaveProperty("note");
+
+    await ds.getRepository(Order).update(paid.order.id, {
+      status: OrderStatus.REFUNDED,
+    });
+    const reloaded = await request(app.getHttpServer())
+      .get(`/api/v1/admin/raffles/${raffle.id}/draw-readiness`)
+      .set(auth())
+      .expect(200);
+    expect(reloaded.body).toMatchObject({
+      canDraw: false,
+      result: {
+        winningNumber: 47,
+        drawMethod: RaffleDrawMethod.AUTOMATIC,
+        buyerName: "Buyer 47",
+      },
+    });
+    expect(reloaded.body.blockers).toContainEqual({
+      code: "RAFFLE_ALREADY_DRAWN",
+    });
+  });
+
+  it("registers EXTERNAL on the same endpoint with an eligible number and audited note", async () => {
+    const raffle = await active();
+    const paid = await reserve(raffle.id, [21, 47]);
+    await settle(paid.order);
+    await action(raffle.id, "close").expect(201);
+
+    const response = await action(raffle.id, "draw")
+      .send({
+        method: RaffleDrawMethod.EXTERNAL,
+        winningNumber: 47,
+        note: "Sorteo realizado mediante Instagram Live",
+      })
+      .expect(201);
+    expect(response.body).toMatchObject({
+      status: RaffleStatus.DRAWN,
+      winningNumber: 47,
+      drawMethod: RaffleDrawMethod.EXTERNAL,
+      eligibleCount: 2,
+      winner: { number: 47, buyerName: "Buyer 21-47" },
+    });
+    expect(
+      (
+        await ds.getRepository(AdminAuditLog).findOneByOrFail({
+          action: "RAFFLE_DRAWN",
+          entityId: raffle.id,
+        })
+      ).metadata,
+    ).toMatchObject({
+      drawMethod: RaffleDrawMethod.EXTERNAL,
+      winningNumber: 47,
+      eligibleCount: 2,
+      eligibleNumbers: [21, 47],
+      note: "Sorteo realizado mediante Instagram Live",
+    });
+  });
+
+  it("rejects winner injection into AUTOMATIC and exposes no /sortear backend bypass", async () => {
+    const raffle = await active();
+    await action(raffle.id, "close").expect(201);
+    expect(
+      (
+        await action(raffle.id, "draw")
+          .send({ method: RaffleDrawMethod.AUTOMATIC, winningNumber: 47 })
+          .expect(400)
+      ).body.code,
+    ).toBe("RAFFLE_DRAW_PAYLOAD_INVALID");
+    await request(app.getHttpServer())
+      .post(`/api/v1/sortear/${raffle.id}`)
+      .send({ winningNumber: 47 })
+      .expect(404);
+  });
+
+  it("allows exactly one concurrent AUTOMATIC draw and keeps one immutable audit", async () => {
+    const raffle = await active();
+    const paid = await reserve(raffle.id, [47]);
+    await settle(paid.order);
+    await action(raffle.id, "close").expect(201);
+    const responses = await Promise.all([
+      action(raffle.id, "draw")
+        .send({ method: RaffleDrawMethod.AUTOMATIC })
+        .then((response) => response),
+      action(raffle.id, "draw")
+        .send({ method: RaffleDrawMethod.AUTOMATIC })
+        .then((response) => response),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      201, 409,
+    ]);
+    expect(
+      responses.find((response) => response.status === 409)?.body.code,
+    ).toBe("RAFFLE_ALREADY_DRAWN");
+    expect(
+      await ds.getRepository(AdminAuditLog).countBy({
+        action: "RAFFLE_DRAWN",
+        entityId: raffle.id,
+      }),
+    ).toBe(1);
+  });
+
+  it("protects automatic draw and readiness with the existing Admin authentication", async () => {
+    const raffleId = crypto.randomUUID();
+    await request(app.getHttpServer())
+      .post(`/api/v1/admin/raffles/${raffleId}/draw`)
+      .send({ method: RaffleDrawMethod.AUTOMATIC })
+      .expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/v1/admin/raffles/${raffleId}/draw-readiness`)
+      .expect(401);
   });
 
   it.each([

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { createHash } from "crypto";
+import { createHash, randomInt } from "crypto";
 import { DataSource, EntityManager, In, QueryFailedError } from "typeorm";
 import { AdminAuditLog } from "../admin/entities/admin-audit-log.entity";
 import { DomainError } from "../common/domain-error";
@@ -30,6 +30,8 @@ import { RafflePurchase } from "./entities/raffle-purchase.entity";
 import {
   CreateManualRaffleSaleDto,
   CreateRaffleDto,
+  DrawRaffleDto,
+  RaffleDrawMethod,
   RaffleListDto,
   RafflePurchasesListDto,
   UpdateRaffleDto,
@@ -48,6 +50,19 @@ type FinancialSummaryRow = {
   paidPurchases: string;
   activeReservations: string;
   revenueInCents: string;
+};
+
+type LinkedRaffleNumber = {
+  raffleNumber: RaffleNumber;
+  purchase: RafflePurchase;
+  order: Order;
+};
+
+type RaffleDrawState = {
+  linked: LinkedRaffleNumber[];
+  eligible: LinkedRaffleNumber[];
+  reservedCount: number;
+  nonTerminalOrderCount: number;
 };
 
 @Injectable()
@@ -700,7 +715,86 @@ export class RafflesService {
     });
   }
 
-  async draw(id: string, winningNumber: number, adminId: string) {
+  async drawReadiness(id: string) {
+    const raffle = await this.requireRaffle(id);
+    const state = await this.drawState(this.dataSource.manager, id);
+    const blockers: Array<{ code: string; count?: number }> = [];
+    if (raffle.status === RaffleStatus.DRAWN)
+      blockers.push({ code: "RAFFLE_ALREADY_DRAWN" });
+    else if (raffle.status !== RaffleStatus.CLOSED)
+      blockers.push({ code: "RAFFLE_NOT_CLOSED" });
+    if (state.reservedCount)
+      blockers.push({
+        code: "RAFFLE_RESERVED_NUMBERS_PENDING",
+        count: state.reservedCount,
+      });
+    if (state.nonTerminalOrderCount)
+      blockers.push({
+        code: "RAFFLE_PAYMENTS_PENDING",
+        count: state.nonTerminalOrderCount,
+      });
+    if (!state.eligible.length)
+      blockers.push({ code: "RAFFLE_NO_ELIGIBLE_PARTICIPANTS" });
+
+    const drawAudit =
+      raffle.status === RaffleStatus.DRAWN
+        ? await this.dataSource.getRepository(AdminAuditLog).findOne({
+            where: {
+              entityType: "RAFFLE",
+              entityId: id,
+              action: "RAFFLE_DRAWN",
+            },
+            order: { createdAt: "DESC" },
+          })
+        : null;
+    const winner =
+      raffle.winningNumber === null
+        ? null
+        : state.linked.find(
+            (item) => item.raffleNumber.number === raffle.winningNumber,
+          );
+    return {
+      raffle: this.raffleView(raffle),
+      canDraw: raffle.status === RaffleStatus.CLOSED && blockers.length === 0,
+      blockers,
+      totalNumbers: await this.dataSource.getRepository(RaffleNumber).countBy({
+        raffleId: id,
+      }),
+      eligibleCount: state.eligible.length,
+      eligibleNumbers: state.eligible.map((item) => item.raffleNumber.number),
+      participants: state.eligible.map((item) => ({
+        number: item.raffleNumber.number,
+        buyerName: item.purchase.buyerName,
+      })),
+      revenueInCents: state.eligible.reduce(
+        (sum, item) => sum + item.purchase.unitPriceInCents,
+        0,
+      ),
+      result:
+        raffle.status === RaffleStatus.DRAWN && raffle.winningNumber !== null
+          ? {
+              winningNumber: raffle.winningNumber,
+              drawnAt: raffle.drawnAt,
+              drawMethod: drawAudit?.metadata?.drawMethod ?? null,
+              note: drawAudit?.metadata?.note ?? null,
+              buyerName: winner?.purchase.buyerName ?? null,
+            }
+          : null,
+    };
+  }
+
+  async draw(id: string, dto: DrawRaffleDto, adminId: string) {
+    const method = dto.method ?? RaffleDrawMethod.EXTERNAL;
+    if (
+      method === RaffleDrawMethod.AUTOMATIC &&
+      (dto.winningNumber !== undefined || dto.note !== undefined)
+    )
+      throw new DomainError(
+        "RAFFLE_DRAW_PAYLOAD_INVALID",
+        "El sorteo automático no acepta número ganador ni nota externa.",
+        undefined,
+        400,
+      );
     return this.dataSource.transaction(async (manager) => {
       const raffle = await this.lockRaffle(manager, id);
       if (raffle.status === RaffleStatus.DRAWN)
@@ -714,30 +808,32 @@ export class RafflesService {
           "La rifa debe estar cerrada antes del sorteo.",
         );
 
-      const reserved = await manager
-        .getRepository(RaffleNumber)
-        .createQueryBuilder("number")
-        .setLock("pessimistic_write")
-        .where("number.raffle_id = :id", { id })
-        .andWhere("number.status = :status", {
-          status: RaffleNumberStatus.RESERVED,
-        })
-        .orderBy("number.number", "ASC")
-        .getMany();
-      const nonTerminalOrders = await manager
-        .getRepository(RafflePurchase)
-        .createQueryBuilder("purchase")
-        .innerJoin(Order, "order", "order.id = purchase.order_id")
-        .where("purchase.raffle_id = :id", { id })
-        .andWhere("order.status IN (:...statuses)", {
-          statuses: [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAYMENT_PENDING],
-        })
-        .getCount();
-      if (reserved.length || nonTerminalOrders)
+      const state = await this.drawState(manager, id);
+      if (state.reservedCount || state.nonTerminalOrderCount)
         throw new DomainError(
           "RAFFLE_DRAW_NOT_ALLOWED",
           "La rifa todavía tiene reservas o pagos sin resolver.",
         );
+
+      let selected: LinkedRaffleNumber | undefined;
+      if (method === RaffleDrawMethod.AUTOMATIC) {
+        if (!state.eligible.length)
+          throw new DomainError(
+            "RAFFLE_DRAW_NOT_ALLOWED",
+            "La rifa no tiene participantes habilitados para sortear.",
+          );
+        selected = state.eligible[randomInt(state.eligible.length)];
+      } else {
+        selected = state.eligible.find(
+          (item) => item.raffleNumber.number === dto.winningNumber,
+        );
+        if (!selected)
+          throw new DomainError(
+            "RAFFLE_WINNING_NUMBER_NOT_ELIGIBLE",
+            "El número ganador debe corresponder a una compra pagada.",
+          );
+      }
+      const winningNumber = selected.raffleNumber.number;
 
       const winner = await manager
         .getRepository(RaffleNumber)
@@ -777,8 +873,22 @@ export class RafflesService {
         previousStatus,
         newStatus: raffle.status,
         winningNumber,
+        drawMethod: method,
+        eligibleCount: state.eligible.length,
+        eligibleNumbers: state.eligible.map((item) => item.raffleNumber.number),
+        ...(method === RaffleDrawMethod.EXTERNAL && dto.note
+          ? { note: dto.note }
+          : {}),
       });
-      return this.raffleView(raffle);
+      return {
+        ...this.raffleView(raffle),
+        drawMethod: method,
+        eligibleCount: state.eligible.length,
+        winner: {
+          number: winningNumber,
+          buyerName: purchase.buyerName,
+        },
+      };
     });
   }
 
@@ -1043,6 +1153,61 @@ export class RafflesService {
     if (order.status === OrderStatus.AWAITING_PAYMENT) return "RESERVED";
     if (order.status === OrderStatus.CANCELLED) return "EXPIRED";
     return order.status;
+  }
+
+  private async drawState(
+    manager: EntityManager,
+    raffleId: string,
+  ): Promise<RaffleDrawState> {
+    const numbers = await manager.getRepository(RaffleNumber).find({
+      where: { raffleId },
+      order: { number: "ASC" },
+    });
+    const purchaseIds = [
+      ...new Set(
+        numbers
+          .map((number) => number.rafflePurchaseId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const purchases = purchaseIds.length
+      ? await manager.getRepository(RafflePurchase).findBy({
+          id: In(purchaseIds),
+        })
+      : [];
+    const purchaseById = new Map(
+      purchases.map((purchase) => [purchase.id, purchase]),
+    );
+    const orderIds = [
+      ...new Set(purchases.map((purchase) => purchase.orderId)),
+    ];
+    const orders = orderIds.length
+      ? await manager.getRepository(Order).findBy({ id: In(orderIds) })
+      : [];
+    const orderById = new Map(orders.map((order) => [order.id, order]));
+    const linked: LinkedRaffleNumber[] = [];
+    const eligible: LinkedRaffleNumber[] = [];
+    for (const raffleNumber of numbers) {
+      if (!raffleNumber.rafflePurchaseId) continue;
+      const purchase = purchaseById.get(raffleNumber.rafflePurchaseId);
+      const order = purchase ? orderById.get(purchase.orderId) : undefined;
+      if (!purchase || !order) continue;
+      const item = { raffleNumber, purchase, order };
+      linked.push(item);
+      if (isEligibleRaffleParticipant(raffleNumber, order)) eligible.push(item);
+    }
+    return {
+      linked,
+      eligible,
+      reservedCount: numbers.filter(
+        (number) => number.status === RaffleNumberStatus.RESERVED,
+      ).length,
+      nonTerminalOrderCount: orders.filter((order) =>
+        [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAYMENT_PENDING].includes(
+          order.status,
+        ),
+      ).length,
+    };
   }
 
   private async lockRaffle(manager: EntityManager, id: string) {

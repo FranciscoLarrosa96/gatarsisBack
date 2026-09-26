@@ -113,7 +113,12 @@ export class AdminRafflesController {
     @Body() dto: DrawRaffleDto,
     @Req() request: AdminRequest,
   ) {
-    return this.raffles.draw(id, dto.winningNumber, request.admin!.id);
+    return this.raffles.draw(id, dto, request.admin!.id);
+  }
+
+  @Get(":id/draw-readiness")
+  drawReadiness(@Param("id", new ParseUUIDPipe()) id: string) {
+    return this.raffles.drawReadiness(id);
   }
 
   @Get(":id/numbers")

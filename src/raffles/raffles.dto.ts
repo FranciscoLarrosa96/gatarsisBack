@@ -124,12 +124,28 @@ export class RaffleListDto {
   pageSize?: number;
 }
 
+export enum RaffleDrawMethod {
+  AUTOMATIC = "AUTOMATIC",
+  EXTERNAL = "EXTERNAL",
+}
+
 export class DrawRaffleDto {
+  @IsOptional()
+  @IsEnum(RaffleDrawMethod)
+  method?: RaffleDrawMethod;
+
+  @ValidateIf((dto: DrawRaffleDto) => dto.method !== RaffleDrawMethod.AUTOMATIC)
   @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(99)
-  winningNumber!: number;
+  winningNumber?: number;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }
 
 export class RafflePurchasesListDto extends RaffleListDto {}
