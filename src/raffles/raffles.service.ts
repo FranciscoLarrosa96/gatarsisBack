@@ -35,6 +35,7 @@ import {
   UpdateRaffleDto,
 } from "./raffles.dto";
 import { raffleReservationConfig } from "./raffle.config";
+import { isEligibleRaffleParticipant } from "./raffle-participant-eligibility";
 
 type NumberSummaryRow = {
   total: string;
@@ -285,10 +286,7 @@ export class RafflesService {
       const driverError = (
         error as { driverError?: { code?: string; constraint?: string } }
       ).driverError;
-      if (
-        error instanceof QueryFailedError &&
-        driverError?.code === "23505"
-      ) {
+      if (error instanceof QueryFailedError && driverError?.code === "23505") {
         const raced = await this.dataSource
           .getRepository(Order)
           .findOneBy({ idempotencyKey: dto.idempotencyKey });
@@ -575,7 +573,9 @@ export class RafflesService {
       }
       await manager.delete(RaffleNumber, { raffleId: id });
       if (purchases.length)
-        await manager.delete(RafflePurchase, { id: In(purchases.map((item) => item.id)) });
+        await manager.delete(RafflePurchase, {
+          id: In(purchases.map((item) => item.id)),
+        });
       if (orderIds.length) await manager.delete(Order, { id: In(orderIds) });
       await manager.delete(Raffle, { id });
       await this.audit(manager, adminId, "RAFFLE_DELETED", id, {
@@ -746,11 +746,7 @@ export class RafflesService {
         .where("number.raffle_id = :id", { id })
         .andWhere("number.number = :winningNumber", { winningNumber })
         .getOne();
-      if (
-        !winner ||
-        winner.status !== RaffleNumberStatus.SOLD ||
-        !winner.rafflePurchaseId
-      )
+      if (!winner || !winner.rafflePurchaseId)
         throw new DomainError(
           "RAFFLE_WINNING_NUMBER_NOT_ELIGIBLE",
           "El número ganador debe corresponder a una compra pagada.",
@@ -764,7 +760,7 @@ export class RafflesService {
         .setLock("pessimistic_write")
         .where("order.id = :orderId", { orderId: purchase.orderId })
         .getOneOrFail();
-      if (order.status !== OrderStatus.PAID)
+      if (!isEligibleRaffleParticipant(winner, order))
         throw new DomainError(
           "RAFFLE_WINNING_NUMBER_NOT_ELIGIBLE",
           "El número ganador debe corresponder a una compra pagada.",
@@ -827,6 +823,17 @@ export class RafflesService {
               phone: purchase.buyerPhone,
             }
           : null,
+        purchase: purchase
+          ? {
+              id: purchase.id,
+              unitPriceInCents: purchase.unitPriceInCents,
+              manualPaymentMethod: purchase.manualPaymentMethod,
+              createdAt: purchase.createdAt,
+            }
+          : null,
+        paymentSource: order?.paymentSource ?? null,
+        totalInCents: order?.totalInCents ?? null,
+        paidAt: order?.paidAt ?? null,
         order: order ? { id: order.id, status: order.status } : null,
         payment: payment ? this.paymentView(payment) : null,
       };

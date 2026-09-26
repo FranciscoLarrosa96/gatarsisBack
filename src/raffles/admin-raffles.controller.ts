@@ -10,7 +10,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
 } from "@nestjs/common";
+import { Response } from "express";
 import { AdminRequest } from "../admin/admin-auth.guard";
 import {
   CreateManualRaffleSaleDto,
@@ -21,10 +24,14 @@ import {
   UpdateRaffleDto,
 } from "./raffles.dto";
 import { RafflesService } from "./raffles.service";
+import { RaffleExportsService } from "./raffle-exports.service";
 
 @Controller("admin/raffles")
 export class AdminRafflesController {
-  constructor(private readonly raffles: RafflesService) {}
+  constructor(
+    private readonly raffles: RafflesService,
+    private readonly exports: RaffleExportsService,
+  ) {}
 
   @Post()
   create(@Body() dto: CreateRaffleDto, @Req() request: AdminRequest) {
@@ -114,6 +121,22 @@ export class AdminRafflesController {
     return this.raffles.numbers(id);
   }
 
+  @Get(":id/export/xlsx")
+  async exportExcel(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.exportResponse(await this.exports.excel(id), response);
+  }
+
+  @Get(":id/export/pdf")
+  async exportPdf(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.exportResponse(await this.exports.pdf(id), response);
+  }
+
   @Get(":id/purchases")
   purchases(
     @Param("id", new ParseUUIDPipe()) id: string,
@@ -128,5 +151,18 @@ export class AdminRafflesController {
     @Param("purchaseId", new ParseUUIDPipe()) purchaseId: string,
   ) {
     return this.raffles.purchaseDetail(id, purchaseId);
+  }
+
+  private exportResponse(
+    file: { buffer: Buffer; contentType: string; filename: string },
+    response: Response,
+  ) {
+    response.setHeader("Content-Type", file.contentType);
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.filename}"`,
+    );
+    response.setHeader("Content-Length", String(file.buffer.length));
+    return new StreamableFile(file.buffer);
   }
 }

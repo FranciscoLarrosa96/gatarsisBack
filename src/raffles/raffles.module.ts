@@ -7,6 +7,7 @@ import { RaffleLifecycleService } from "./raffle-lifecycle.service";
 import { RafflesService } from "./raffles.service";
 import { PublicRafflesController } from "./public-raffles.controller";
 import { PublicRafflesService } from "./public-raffles.service";
+import { RaffleExportsService } from "./raffle-exports.service";
 
 @Module({
   imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }])],
@@ -20,6 +21,7 @@ import { PublicRafflesService } from "./public-raffles.service";
     RaffleReservationsService,
     RaffleLifecycleService,
     PublicRafflesService,
+    RaffleExportsService,
   ],
   exports: [RaffleLifecycleService],
 })
