@@ -217,13 +217,6 @@ export class RaffleReservationsService {
         undefined,
         400,
       );
-    if (value.length > raffleReservationConfig().maxNumbersPerPurchase)
-      throw new DomainError(
-        "RAFFLE_TOO_MANY_NUMBERS",
-        "La selección supera el máximo de números permitido.",
-        undefined,
-        400,
-      );
     if (
       value.some(
         (number) =>

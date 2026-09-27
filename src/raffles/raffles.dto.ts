@@ -176,7 +176,6 @@ export class ManualRaffleBuyerDto {
 export class CreateManualRaffleSaleDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(100)
   @ArrayUnique()
   @IsInt({ each: true })
   @Min(0, { each: true })

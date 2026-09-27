@@ -193,9 +193,10 @@ Valores iniciales propuestos:
 | Límite | Valor | Motivo |
 | --- | ---: | --- |
 | RAFFLE_RESERVATION_MINUTES | 10 | TTL independiente y menor capacidad de acaparamiento. |
-| MAX_RAFFLE_NUMBERS_PER_PURCHASE | 10 | Participación múltiple sin bloquear la rifa completa. |
 | Reservas activas por email | 2 | Mitiga acaparamiento; se serializa con advisory lock. |
 | Rate limit | 20/minuto/origen | Más estricto que merch, sin Redis. |
+
+No existe un máximo fijo de números por compra. El máximo efectivo es la cantidad de números solicitados que sigan `AVAILABLE` dentro de la transacción.
 
 ## 8. API propuesta
 
@@ -233,7 +234,6 @@ El dashboard cuenta AVAILABLE/RESERVED/SOLD y recauda sólo Orders PAID.
 | RAFFLE_NOT_FOUND | 404 | Rifa inexistente. |
 | RAFFLE_NOT_ACTIVE | 409 | No se puede reservar en DRAFT/PAUSED/CLOSED/DRAWN. |
 | RAFFLE_NUMBER_INVALID | 400 | Fuera de 0..99, formato inválido o repetido. |
-| RAFFLE_TOO_MANY_NUMBERS | 400 | Excede máximo por compra. |
 | RAFFLE_NUMBER_UNAVAILABLE | 409 | Devuelve details.numbers sin reserva parcial. |
 | RAFFLE_PURCHASE_NOT_FOUND | 404 | Compra inexistente. |
 | RAFFLE_PURCHASE_EXPIRED | 409 | Preference posterior al TTL. |

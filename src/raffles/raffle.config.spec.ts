@@ -7,7 +7,6 @@ import {
 describe("raffle reservation configuration", () => {
   const names = [
     "RAFFLE_RESERVATION_MINUTES",
-    "MAX_RAFFLE_NUMBERS_PER_PURCHASE",
     "MAX_ACTIVE_RAFFLE_RESERVATIONS_PER_EMAIL",
   ] as const;
   const previous = new Map<string, string | undefined>();
@@ -30,7 +29,6 @@ describe("raffle reservation configuration", () => {
   it("uses the approved defaults", () => {
     expect(raffleReservationConfig()).toEqual({
       reservationMinutes: 10,
-      maxNumbersPerPurchase: 10,
       maxActiveReservationsPerEmail: 2,
     });
     expect(RAFFLE_RESERVATION_RATE_LIMIT).toBe(20);
@@ -39,11 +37,9 @@ describe("raffle reservation configuration", () => {
 
   it("loads explicit environment values", () => {
     process.env.RAFFLE_RESERVATION_MINUTES = "12";
-    process.env.MAX_RAFFLE_NUMBERS_PER_PURCHASE = "8";
     process.env.MAX_ACTIVE_RAFFLE_RESERVATIONS_PER_EMAIL = "3";
     expect(raffleReservationConfig()).toEqual({
       reservationMinutes: 12,
-      maxNumbersPerPurchase: 8,
       maxActiveReservationsPerEmail: 3,
     });
   });

@@ -7,7 +7,6 @@ const positiveInteger = (name: string, fallback: number): number => {
 
 export const raffleReservationConfig = () => ({
   reservationMinutes: positiveInteger("RAFFLE_RESERVATION_MINUTES", 10),
-  maxNumbersPerPurchase: positiveInteger("MAX_RAFFLE_NUMBERS_PER_PURCHASE", 10),
   maxActiveReservationsPerEmail: positiveInteger(
     "MAX_ACTIVE_RAFFLE_RESERVATIONS_PER_EMAIL",
     2,

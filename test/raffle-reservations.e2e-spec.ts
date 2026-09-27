@@ -30,7 +30,6 @@ describe("public raffle reservations R3 (PostgreSQL)", () => {
     process.env.DATABASE_NAME ??= "gatarsis_test";
     process.env.MP_ENABLED = "false";
     process.env.RAFFLE_RESERVATION_MINUTES = "10";
-    process.env.MAX_RAFFLE_NUMBERS_PER_PURCHASE = "10";
     process.env.MAX_ACTIVE_RAFFLE_RESERVATIONS_PER_EMAIL = "2";
     const module = await Test.createTestingModule({
       imports: [AppModule],
@@ -121,15 +120,56 @@ describe("public raffle reservations R3 (PostgreSQL)", () => {
     [[7.5], "RAFFLE_NUMBER_INVALID"],
     [["7"], "RAFFLE_NUMBER_INVALID"],
     [[7, 7], "RAFFLE_NUMBER_INVALID"],
-    [
-      Array.from({ length: 11 }, (_, index) => index),
-      "RAFFLE_TOO_MANY_NUMBERS",
-    ],
   ])("rejects invalid number selection %# with %s", async (numbers, code) => {
     const active = await raffle();
     const response = await reserve(active.id, numbers).expect(400);
     expect(response.body.code).toBe(code);
     expect(await dataSource.getRepository(Order).count()).toBe(0);
+  });
+
+  it.each([11, 25])(
+    "reserves %i numbers in one purchase with a server-calculated total",
+    async (quantity) => {
+      const priceInCents = 12_500;
+      const active = await raffle(RaffleStatus.ACTIVE, priceInCents);
+      const numbers = Array.from({ length: quantity }, (_, number) => number);
+
+      const response = await reserve(active.id, numbers).expect(201);
+
+      expect(response.body).toMatchObject({
+        raffleId: active.id,
+        numbers,
+        unitPriceInCents: priceInCents,
+        totalInCents: quantity * priceInCents,
+      });
+      expect(await dataSource.getRepository(Order).count()).toBe(1);
+      expect(await dataSource.getRepository(RafflePurchase).count()).toBe(1);
+      expect(
+        await dataSource.getRepository(RaffleNumber).countBy({
+          raffleId: active.id,
+          status: RaffleNumberStatus.RESERVED,
+        }),
+      ).toBe(quantity);
+    },
+  );
+
+  it("reserves every available number without a fixed purchase cap", async () => {
+    const priceInCents = 1_250;
+    const active = await raffle(RaffleStatus.ACTIVE, priceInCents);
+    const numbers = Array.from({ length: 100 }, (_, number) => number);
+
+    const response = await reserve(active.id, numbers).expect(201);
+
+    expect(response.body.numbers).toEqual(numbers);
+    expect(response.body.totalInCents).toBe(numbers.length * priceInCents);
+    expect(await dataSource.getRepository(Order).count()).toBe(1);
+    expect(await dataSource.getRepository(RafflePurchase).count()).toBe(1);
+    expect(
+      await dataSource.getRepository(RaffleNumber).countBy({
+        raffleId: active.id,
+        status: RaffleNumberStatus.RESERVED,
+      }),
+    ).toBe(100);
   });
 
   it("requires Idempotency-Key", async () => {

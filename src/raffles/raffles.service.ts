@@ -36,7 +36,6 @@ import {
   RafflePurchasesListDto,
   UpdateRaffleDto,
 } from "./raffles.dto";
-import { raffleReservationConfig } from "./raffle.config";
 import { isEligibleRaffleParticipant } from "./raffle-participant-eligibility";
 
 type NumberSummaryRow = {
@@ -171,13 +170,6 @@ export class RafflesService {
     adminId: string,
   ) {
     const numbers = [...dto.numbers].sort((a, b) => a - b);
-    if (numbers.length > raffleReservationConfig().maxNumbersPerPurchase)
-      throw new DomainError(
-        "RAFFLE_TOO_MANY_NUMBERS",
-        "La cantidad de números supera el máximo permitido por compra.",
-        undefined,
-        400,
-      );
 
     const fingerprint = createHash("sha256")
       .update(

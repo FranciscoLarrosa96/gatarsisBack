@@ -43,7 +43,6 @@ describe("admin manual raffle sales (PostgreSQL)", () => {
   beforeAll(async () => {
     process.env.DATABASE_NAME ??= "gatarsis_test";
     process.env.MP_ENABLED = "false";
-    process.env.MAX_RAFFLE_NUMBERS_PER_PURCHASE = "10";
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(MERCADO_PAGO_GATEWAY)
       .useValue(gateway)
@@ -191,6 +190,33 @@ describe("admin manual raffle sales (PostgreSQL)", () => {
         status: RaffleNumberStatus.SOLD,
       }),
     ).toBe(3);
+  });
+
+  it("sells more than 10 numbers atomically in one manual purchase", async () => {
+    const priceInCents = 2_000;
+    const active = await raffle(RaffleStatus.ACTIVE, priceInCents);
+    const numbers = Array.from({ length: 25 }, (_, number) => number);
+
+    const response = await sell(active.id, payload(numbers)).expect(201);
+
+    expect(response.body).toMatchObject({
+      numbers,
+      unitPriceInCents: priceInCents,
+      totalInCents: numbers.length * priceInCents,
+    });
+    expect(await ds.getRepository(Order).count()).toBe(1);
+    expect(await ds.getRepository(RafflePurchase).count()).toBe(1);
+    expect(
+      await ds.getRepository(RaffleNumber).countBy({
+        raffleId: active.id,
+        status: RaffleNumberStatus.SOLD,
+      }),
+    ).toBe(numbers.length);
+    expect(
+      await ds.getRepository(AdminAuditLog).countBy({
+        action: "manual_raffle_sale_created",
+      }),
+    ).toBe(1);
   });
 
   it("rolls back the complete sale if any requested number is unavailable", async () => {
