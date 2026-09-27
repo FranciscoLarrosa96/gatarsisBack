@@ -10,6 +10,7 @@ import {
   Max,
   Min,
   MinLength,
+  MaxLength,
 } from "class-validator";
 export class ProductDto {
   @IsString() @MinLength(1) name!: string;
@@ -30,8 +31,9 @@ export class ProductPatchDto {
 export class VariantDto {
   @IsString() @MinLength(1) sku!: string;
   @IsString() @MinLength(1) name!: string;
-  @IsOptional() @IsString() color?: string | null;
-  @IsOptional() @IsString() size?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) model?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) color?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) size?: string | null;
   @IsOptional() @IsObject() attributes?: Record<string, string>;
   @Type(() => Number) @IsInt() @Min(1) priceInCents!: number;
   @IsOptional() @IsBoolean() active?: boolean;
@@ -44,8 +46,9 @@ export class VariantDto {
 export class VariantPatchDto {
   @IsOptional() @IsString() @MinLength(1) sku?: string;
   @IsOptional() @IsString() @MinLength(1) name?: string;
-  @IsOptional() @IsString() color?: string | null;
-  @IsOptional() @IsString() size?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) model?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) color?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) size?: string | null;
   @IsOptional() @IsObject() attributes?: Record<string, string>;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) priceInCents?: number;
   @IsOptional() @IsBoolean() active?: boolean;

@@ -25,6 +25,7 @@ import { RefundOperations1766880000000 } from "../database/migrations/1766880000
 import { VariantMedia1766966400000 } from "../database/migrations/1766966400000-VariantMedia";
 import { EarlyPaymentReconciliation1767052800000 } from "../database/migrations/1767052800000-EarlyPaymentReconciliation";
 import { VariantAttributes1767139200000 } from "../database/migrations/1767139200000-VariantAttributes";
+import { VariantModel1767657600000 } from "../database/migrations/1767657600000-VariantModel";
 import { RafflesFoundation1767225600000 } from "../database/migrations/1767225600000-RafflesFoundation";
 import { Raffle } from "../raffles/entities/raffle.entity";
 import { RaffleNumber } from "../raffles/entities/raffle-number.entity";
@@ -122,6 +123,7 @@ const dataSourceOptions = (): DataSourceOptions => ({
   ],
   synchronize: false,
   migrations: [
+    VariantModel1767657600000,
     InitialCommerce1766448000000,
     PaymentsMercadoPago1766534400000,
     AdminAuth1766620800000,

@@ -22,6 +22,7 @@ export class ProductVariant {
   product!: Product;
   @Column({ unique: true }) sku!: string;
   @Column() name!: string;
+  @Column({ type: "varchar", length: 80, nullable: true }) model!: string | null;
   @Column({ type: "varchar", nullable: true }) color!: string | null;
   @Column({ type: "varchar", nullable: true }) size!: string | null;
   @Column({ type: "jsonb", default: () => "'{}'" }) attributes!: Record<string, string>;

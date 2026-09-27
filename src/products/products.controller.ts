@@ -41,6 +41,7 @@ export class ProductsController {
         id: variant.id,
         sku: variant.sku,
         name: variant.name,
+        model: variant.model ?? null,
         color: variant.color,
         size: variant.size,
         attributes: variant.attributes ?? {},

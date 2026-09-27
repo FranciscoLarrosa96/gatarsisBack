@@ -58,6 +58,15 @@ export class AdminProductsService {
     } catch (e) {
       if (
         e instanceof QueryFailedError &&
+        (e as { code?: string }).code === "23505" &&
+        (e as { constraint?: string }).constraint === "UQ_variant_model_combination"
+      )
+        throw new DomainError(
+          "VARIANT_ATTRIBUTE_COMBINATION_CONFLICT",
+          "Ya existe una variante con el mismo modelo, color y talle.",
+        );
+      if (
+        e instanceof QueryFailedError &&
         (e as { code?: string }).code === "23505"
       )
         throw new DomainError(
@@ -89,22 +98,39 @@ export class AdminProductsService {
     excludeVariantId?: string,
   ) {
     const fingerprint = attributesFingerprint(attributes);
-    if (!active || !fingerprint) return;
+    if ((!active && !attributes.model) || !fingerprint) return;
     const variants = await manager.findBy(ProductVariant, {
       productId,
-      active: true,
+      ...(attributes.model ? {} : { active: true }),
     });
     const duplicate = variants.find(
       (variant) =>
         variant.id !== excludeVariantId &&
-        attributesFingerprint(this.attributes(variant.attributes ?? {})) ===
-          fingerprint,
+        (attributes.model
+          ? ["model", "color", "size"].every(
+              (key) => (attributes[key] ?? "").toLowerCase() ===
+                (variant[key as "model" | "color" | "size"] ?? "").trim().toLowerCase(),
+            )
+          : attributesFingerprint(this.variantAttributes(variant.attributes ?? {}, variant)) === fingerprint),
     );
     if (duplicate)
       throw new DomainError(
         "VARIANT_ATTRIBUTE_COMBINATION_CONFLICT",
         "Ya existe una variante activa con la misma combinación de atributos.",
       );
+  }
+  private variantAttributes(
+    input: unknown,
+    dimensions: { model?: string | null; color?: string | null; size?: string | null },
+  ): VariantAttributes {
+    const attributes = this.attributes(input);
+    for (const key of ["model", "color", "size"] as const) {
+      if (dimensions[key] === undefined) continue;
+      const value = dimensions[key]?.trim().replace(/\s+/g, " ") || null;
+      if (value) attributes[key] = value;
+      else delete attributes[key];
+    }
+    return this.attributes(attributes);
   }
   async list(query: ProductListDto) {
     const page = query.page ?? 1,
@@ -346,10 +372,15 @@ export class AdminProductsService {
     return this.unique(
       () =>
         this.dataSource.transaction(async (m) => {
-          if (!(await m.existsBy(Product, { id: productId })))
+          if (
+            !(await m.getRepository(Product).createQueryBuilder("product")
+              .setLock("pessimistic_write")
+              .where("product.id = :productId", { productId })
+              .getOne())
+          )
             throw notFound("PRODUCT_NOT_FOUND", "El producto no existe.");
           const attributes =
-            dto.attributes === undefined ? {} : this.attributes(dto.attributes);
+            this.variantAttributes(dto.attributes ?? {}, dto);
           await this.assertUniqueActiveAttributes(
             m,
             productId,
@@ -360,14 +391,9 @@ export class AdminProductsService {
             productId,
             sku: dto.sku.trim().toUpperCase(),
             name: dto.name.trim(),
-            color:
-              dto.attributes === undefined
-                ? dto.color?.trim() || null
-                : (attributes.color ?? null),
-            size:
-              dto.attributes === undefined
-                ? dto.size?.trim() || null
-                : (attributes.size ?? null),
+            model: attributes.model ?? null,
+            color: attributes.color ?? null,
+            size: attributes.size ?? null,
             attributes,
             priceInCents: dto.priceInCents,
             active: dto.active ?? true,
@@ -425,22 +451,11 @@ export class AdminProductsService {
           const attributes =
             dto.attributes !== undefined
               ? this.attributes(dto.attributes)
-              : this.attributes(v.attributes ?? {});
-          if (dto.attributes === undefined) {
-            if (dto.color !== undefined) {
-              const color = dto.color?.trim() || null;
-              if (color) attributes.color = color;
-              else delete attributes.color;
-            }
-            if (dto.size !== undefined) {
-              const size = dto.size?.trim() || null;
-              if (size) attributes.size = size;
-              else delete attributes.size;
-            }
-          }
-          const normalizedAttributes = this.attributes(attributes);
+              : this.variantAttributes(v.attributes ?? {}, v);
+          const normalizedAttributes = this.variantAttributes(attributes, dto);
           const usesStructuredAttributes =
             dto.attributes !== undefined ||
+            dto.model !== undefined ||
             dto.color !== undefined ||
             dto.size !== undefined;
           await this.assertUniqueActiveAttributes(
@@ -457,6 +472,7 @@ export class AdminProductsService {
               : {}),
             ...(usesStructuredAttributes
               ? {
+                  model: normalizedAttributes.model ?? null,
                   color: normalizedAttributes.color ?? null,
                   size: normalizedAttributes.size ?? null,
                   attributes: normalizedAttributes,
