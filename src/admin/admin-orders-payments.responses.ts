@@ -14,6 +14,10 @@ export type AdminOrderListItem = {
   createdAt: Date;
   reservationExpiresAt: Date;
   paidAt: Date | null;
+  customer: { name: string; email: string | null; phone: string | null } | null;
+  items: { label: string; quantity: number }[];
+  raffle: { title: string; numbers: number[] } | null;
+  paymentProcessingStatus: string | null;
 };
 export type AdminPaymentListItem = {
   id: string;
@@ -38,6 +42,7 @@ export type AdminPaymentDetailResponse = AdminPaymentListItem & {
 export const toAdminOrderListItem = (
   order: Order,
   itemsCount: number,
+  summary: Pick<AdminOrderListItem, "customer" | "items" | "raffle" | "paymentProcessingStatus">,
 ): AdminOrderListItem => ({
   id: order.id,
   kind: order.kind,
@@ -48,6 +53,7 @@ export const toAdminOrderListItem = (
   createdAt: order.createdAt,
   reservationExpiresAt: order.reservationExpiresAt,
   paidAt: order.paidAt ?? null,
+  ...summary,
 });
 export const toAdminPaymentListItem = (
   payment: Payment,

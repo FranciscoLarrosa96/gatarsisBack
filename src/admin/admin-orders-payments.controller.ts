@@ -10,7 +10,7 @@ import {
   Query,
   Req,
 } from "@nestjs/common";
-import { DataSource } from "typeorm";
+import { DataSource, In } from "typeorm";
 import { Order, OrderStatus } from "../orders/entities/order.entity";
 import { OrderItem } from "../orders/entities/order-item.entity";
 import {
@@ -27,6 +27,8 @@ import { toAdminMovement, toAdminOrderItem, toAdminOrderListItem, toAdminPayment
 import { RefundOperation } from '../payments/entities/refund-operation.entity';
 import { FulfillmentStatus, OrderFulfillment } from '../orders/entities/order-fulfillment.entity';
 import { RafflePurchase } from "../raffles/entities/raffle-purchase.entity";
+import { Raffle } from "../raffles/entities/raffle.entity";
+import { RaffleNumber } from "../raffles/entities/raffle-number.entity";
 @Controller("admin")
 export class AdminOrdersPaymentsController {
   constructor(private ds: DataSource) {}
@@ -62,8 +64,68 @@ export class AdminOrdersPaymentsController {
       .skip((p - 1) * s)
       .take(s)
       .getManyAndCount();
+    const orderIds = items.map((order) => order.id);
+    const [orderItems, fulfillments, rafflePurchases, payments] = orderIds.length
+      ? await Promise.all([
+          this.ds.getRepository(OrderItem).find({ where: { orderId: In(orderIds) }, order: { createdAt: "ASC" } }),
+          this.ds.getRepository(OrderFulfillment).findBy({ orderId: In(orderIds) }),
+          this.ds.getRepository(RafflePurchase).findBy({ orderId: In(orderIds) }),
+          this.ds.getRepository(Payment).find({ where: { orderId: In(orderIds) }, order: { createdAt: "DESC" } }),
+        ])
+      : [[], [], [], []];
+    const purchaseIds = rafflePurchases.map((purchase) => purchase.id);
+    const raffleIds = [...new Set(rafflePurchases.map((purchase) => purchase.raffleId))];
+    const [raffleNumbers, raffles] = purchaseIds.length
+      ? await Promise.all([
+          this.ds.getRepository(RaffleNumber).find({ where: { rafflePurchaseId: In(purchaseIds) }, order: { number: "ASC" } }),
+          this.ds.getRepository(Raffle).findBy({ id: In(raffleIds) }),
+        ])
+      : [[], []];
+    const itemsByOrder = new Map<string, { label: string; quantity: number }[]>();
+    for (const item of orderItems) {
+      const list = itemsByOrder.get(item.orderId) ?? [];
+      list.push({
+        label: [item.productNameSnapshot, item.variantNameSnapshot].filter(Boolean).join(" — "),
+        quantity: item.quantity,
+      });
+      itemsByOrder.set(item.orderId, list);
+    }
+    const fulfillmentByOrder = new Map(fulfillments.map((item) => [item.orderId, item]));
+    const purchaseByOrder = new Map(rafflePurchases.map((purchase) => [purchase.orderId, purchase]));
+    const raffleById = new Map(raffles.map((raffle) => [raffle.id, raffle]));
+    const numbersByPurchase = new Map<string, number[]>();
+    for (const item of raffleNumbers) {
+      if (!item.rafflePurchaseId) continue;
+      const numbers = numbersByPurchase.get(item.rafflePurchaseId) ?? [];
+      numbers.push(item.number);
+      numbersByPurchase.set(item.rafflePurchaseId, numbers);
+    }
+    const paymentStatusByOrder = new Map<string, string>();
+    for (const payment of payments)
+      if (!paymentStatusByOrder.has(payment.orderId))
+        paymentStatusByOrder.set(payment.orderId, payment.processingStatus);
     return {
-      items: await Promise.all(items.map(async (o) => toAdminOrderListItem(o, Number((await this.ds.getRepository(OrderItem).createQueryBuilder("item").select("COALESCE(SUM(item.quantity), 0)", "total").where("item.order_id = :orderId", { orderId: o.id }).getRawOne<{ total: string }>())!.total)))),
+      items: items.map((order) => {
+        const purchase = purchaseByOrder.get(order.id);
+        const fulfillment = fulfillmentByOrder.get(order.id);
+        const raffle = purchase ? raffleById.get(purchase.raffleId) : undefined;
+        return toAdminOrderListItem(
+          order,
+          (itemsByOrder.get(order.id) ?? []).reduce((sum, item) => sum + item.quantity, 0),
+          {
+            customer: purchase
+              ? { name: purchase.buyerName, email: purchase.buyerEmail, phone: purchase.buyerPhone }
+              : fulfillment
+                ? { name: fulfillment.customerName, email: fulfillment.customerEmail, phone: fulfillment.customerPhone }
+                : null,
+            items: itemsByOrder.get(order.id) ?? [],
+            raffle: purchase && raffle
+              ? { title: raffle.title, numbers: numbersByPurchase.get(purchase.id) ?? [] }
+              : null,
+            paymentProcessingStatus: paymentStatusByOrder.get(order.id) ?? null,
+          },
+        );
+      }),
       pagination: pagination(total),
     };
   }

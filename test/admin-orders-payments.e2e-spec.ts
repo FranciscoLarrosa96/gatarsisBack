@@ -10,7 +10,7 @@ import {
   InventoryMovement,
   InventoryMovementType,
 } from "../src/inventory/entities/inventory-movement.entity";
-import { Order, OrderStatus } from "../src/orders/entities/order.entity";
+import { Order, OrderKind, OrderPaymentSource, OrderStatus } from "../src/orders/entities/order.entity";
 import { OrderItem } from "../src/orders/entities/order-item.entity";
 import {
   Payment,
@@ -18,6 +18,9 @@ import {
 } from "../src/payments/entities/payment.entity";
 import { Product } from "../src/products/entities/product.entity";
 import { ProductVariant } from "../src/products/entities/product-variant.entity";
+import { RaffleNumber, RaffleNumberStatus } from "../src/raffles/entities/raffle-number.entity";
+import { RafflePurchase } from "../src/raffles/entities/raffle-purchase.entity";
+import { Raffle, RaffleStatus } from "../src/raffles/entities/raffle.entity";
 
 describe("admin orders and payments contracts (PostgreSQL)", () => {
   let app: INestApplication;
@@ -45,7 +48,7 @@ describe("admin orders and payments contracts (PostgreSQL)", () => {
   afterAll(async () => app.close());
   beforeEach(async () => {
     await ds.query(
-      "TRUNCATE admin_audit_logs, admin_sessions, admin_users, inventory_movements, payments, payment_preferences, order_items, orders, inventory, product_variants, products RESTART IDENTITY CASCADE",
+      "TRUNCATE raffle_numbers, raffle_purchases, raffles, admin_audit_logs, admin_sessions, admin_users, inventory_movements, payments, payment_preferences, order_items, orders, inventory, product_variants, products RESTART IDENTITY CASCADE",
     );
     admin = await ds
       .getRepository(AdminUser)
@@ -149,8 +152,15 @@ describe("admin orders and payments contracts (PostgreSQL)", () => {
         expect(r.body.items[0]).toEqual(
           expect.objectContaining({
             id: order.id,
+            kind: "MERCH",
+            paymentSource: "MERCADO_PAGO",
             itemsCount: 5,
             paidAt: null,
+            items: [
+              { label: "Nombre histórico — Variante histórica", quantity: 3 },
+              { label: "Otro histórico — Otra variante", quantity: 2 },
+            ],
+            paymentProcessingStatus: "REQUIRES_REVIEW",
           }),
         );
         expect(r.body.items[0]).not.toHaveProperty("idempotencyKey");
@@ -190,6 +200,69 @@ describe("admin orders and payments contracts (PostgreSQL)", () => {
       .get("/api/v1/admin/payments/mp-non-uuid-123")
       .set(auth())
       .expect(400);
+  });
+  it("returns raffle type, buyer, title, and numbers in the same paginated orders list", async () => {
+    const raffle = await ds.getRepository(Raffle).save({
+      title: "Rifa solidaria",
+      prizeName: "Premio",
+      priceInCents: 5000,
+      status: RaffleStatus.ACTIVE,
+      description: null,
+      imageUrls: [],
+      drawAt: null,
+      winningNumber: null,
+      drawnAt: null,
+      drawnByAdminId: null,
+    });
+    const order = await ds.getRepository(Order).save({
+      kind: OrderKind.RAFFLE,
+      status: OrderStatus.PAID,
+      paymentSource: OrderPaymentSource.MANUAL,
+      idempotencyKey: crypto.randomUUID(),
+      requestFingerprint: null,
+      subtotalInCents: 15000,
+      totalInCents: 15000,
+      reservationExpiresAt: new Date(),
+      paidAt: new Date(),
+    });
+    const purchase = await ds.getRepository(RafflePurchase).save({
+      raffleId: raffle.id,
+      orderId: order.id,
+      buyerName: "Francisco Larrosa",
+      buyerEmail: "francisco@example.test",
+      buyerPhone: "+54 249 4000000",
+      unitPriceInCents: 5000,
+      manualPaymentMethod: null,
+      manualPaymentNote: null,
+    });
+    await ds.getRepository(RaffleNumber).save([7, 23, 48].map((number) => ({
+      raffleId: raffle.id,
+      number,
+      status: RaffleNumberStatus.SOLD,
+      rafflePurchaseId: purchase.id,
+      reservedUntil: null,
+      reservedAt: null,
+      soldAt: new Date(),
+    })));
+
+    await request(app.getHttpServer())
+      .get("/api/v1/admin/orders")
+      .set(auth())
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.items[0]).toEqual(expect.objectContaining({
+          id: order.id,
+          kind: "RAFFLE",
+          itemsCount: 0,
+          customer: {
+            name: "Francisco Larrosa",
+            email: "francisco@example.test",
+            phone: "+54 249 4000000",
+          },
+          raffle: { title: "Rifa solidaria", numbers: [7, 23, 48] },
+          paymentProcessingStatus: null,
+        }));
+      });
   });
   it("resolves review once without changing payment business state", async () => {
     const { payment } = await fixture();
