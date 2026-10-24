@@ -96,6 +96,7 @@ export class InventoryService {
     variantId: string,
     quantity: number,
     orderId: string,
+    reason = "Mercado Pago approved payment",
   ): Promise<void> {
     await this.lockInventoryMutation(manager, variantId);
     const result = await manager
@@ -118,7 +119,7 @@ export class InventoryService {
       type: InventoryMovementType.SALE,
       onHandDelta: -quantity,
       reservedDelta: -quantity,
-      reason: "Mercado Pago approved payment",
+      reason,
     });
   }
 

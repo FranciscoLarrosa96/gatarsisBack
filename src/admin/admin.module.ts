@@ -15,6 +15,9 @@ import { PaymentsModule } from "../payments/payments.module";
 import { AdminRefundsController } from "./admin-refunds.controller";
 import { AdminRefundsService } from "./admin-refunds.service";
 import { AdminDashboardAuditController } from './admin-dashboard-audit.controller';
+import { InventoryModule } from "../inventory/inventory.module";
+import { AdminManualStoreSalesController } from "./admin-manual-store-sales.controller";
+import { AdminManualStoreSalesService } from "./admin-manual-store-sales.service";
 
 const authConfig = adminAuthConfig();
 
@@ -26,6 +29,7 @@ const authConfig = adminAuthConfig();
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PaymentsModule,
+    InventoryModule,
   ],
   controllers: [
     AdminAuthController,
@@ -34,12 +38,14 @@ const authConfig = adminAuthConfig();
     AdminOrdersPaymentsController,
     AdminRefundsController,
     AdminDashboardAuditController,
+    AdminManualStoreSalesController,
   ],
   providers: [
     AdminAuthService,
     AdminProductsService,
     AdminInventoryService,
     AdminRefundsService,
+    AdminManualStoreSalesService,
     { provide: APP_GUARD, useClass: AdminAuthGuard },
   ],
 })

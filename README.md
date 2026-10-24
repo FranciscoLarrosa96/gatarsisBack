@@ -82,6 +82,14 @@ Todas las rutas bajo `/api/v1/admin/**` quedan protegidas por defecto, salvo log
 
 Ambos endpoints son exclusivamente de lectura y no exponen hashes, sesiones ni datos de autenticación.
 
+## Ventas manuales de productos
+
+El admin puede registrar un cobro externo mediante `POST /api/v1/admin/orders/manual`. Se crea una orden normal `PAID / MANUAL`, con sus artículos, entrega pendiente y auditoría, descontando stock en una única transacción. Requiere `paymentReceived: true` y una `idempotencyKey` en el body para reintentar sin duplicar la venta. No crea pagos ni preferencias de Mercado Pago.
+
+El contrato, los errores y la migración requerida están documentados en [docs/manual-store-sales.md](docs/manual-store-sales.md).
+
+El reporte de implementación y las verificaciones están en [docs/manual-store-sales-report.md](docs/manual-store-sales-report.md).
+
 ## Adopciones
 
 `GET /api/v1/adoptions/cats` publica únicamente gatos habilitados con estado `AVAILABLE` o `RESERVED`, ordenados por `displayOrder`. Las imágenes son URLs HTTPS externas; el backend no sube ni transforma archivos. El formulario existente `POST /api/v1/adoptions/applications` acepta opcionalmente `adoptableCatId`; sin ese campo conserva el flujo general, y con él valida que el gato exista, esté publicado y `AVAILABLE` antes de guardar la solicitud y enviar el email.

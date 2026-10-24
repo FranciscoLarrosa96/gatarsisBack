@@ -9,6 +9,8 @@ export type AdminOrderListItem = {
   kind: string;
   status: string;
   paymentSource: string;
+  manualPaymentMethod: string | null;
+  manualSaleNote: string | null;
   totalInCents: number;
   itemsCount: number;
   createdAt: Date;
@@ -48,6 +50,8 @@ export const toAdminOrderListItem = (
   kind: order.kind,
   status: order.status,
   paymentSource: order.paymentSource,
+  manualPaymentMethod: order.manualPaymentMethod ?? null,
+  manualSaleNote: order.manualSaleNote ?? null,
   totalInCents: order.totalInCents,
   itemsCount,
   createdAt: order.createdAt,

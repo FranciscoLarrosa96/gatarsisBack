@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from "typeorm";
 import { OrderItem } from "./order-item.entity";
+import { ManualPaymentMethod } from "../manual-payment-method";
 export enum OrderStatus {
   AWAITING_PAYMENT = "AWAITING_PAYMENT",
   PAYMENT_PENDING = "PAYMENT_PENDING",
@@ -39,6 +40,10 @@ export class Order {
     default: OrderPaymentSource.MERCADO_PAGO,
   })
   paymentSource!: OrderPaymentSource;
+  @Column({ name: "manual_payment_method", type: "enum", enum: ManualPaymentMethod, enumName: "manual_payment_method_enum", nullable: true })
+  manualPaymentMethod!: ManualPaymentMethod | null;
+  @Column({ name: "manual_sale_note", type: "varchar", length: 500, nullable: true })
+  manualSaleNote!: string | null;
   @Column({ name: "idempotency_key", unique: true }) idempotencyKey!: string;
   @Column({ name: "request_fingerprint", type: "varchar", nullable: true })
   requestFingerprint!: string | null;

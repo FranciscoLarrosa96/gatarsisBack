@@ -25,8 +25,8 @@ export class OrderFulfillment {
   @Column({ type: "enum", enum: FulfillmentStatus })
   status!: FulfillmentStatus;
   @Column({ name: "customer_name" }) customerName!: string;
-  @Column({ name: "customer_email" }) customerEmail!: string;
-  @Column({ name: "customer_phone" }) customerPhone!: string;
+  @Column({ name: "customer_email", type: "varchar", nullable: true }) customerEmail!: string | null;
+  @Column({ name: "customer_phone", type: "varchar", nullable: true }) customerPhone!: string | null;
   @Column({ name: "customer_note", type: "varchar", nullable: true })
   customerNote!: string | null;
   @Column({ name: "admin_note", type: "varchar", nullable: true }) adminNote!:

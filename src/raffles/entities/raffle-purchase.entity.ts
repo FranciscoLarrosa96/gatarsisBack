@@ -14,12 +14,9 @@ import {
 import { Order } from "../../orders/entities/order.entity";
 import { Raffle } from "./raffle.entity";
 import { RaffleNumber } from "./raffle-number.entity";
+import { ManualPaymentMethod as ManualRafflePaymentMethod } from "../../orders/manual-payment-method";
 
-export enum ManualRafflePaymentMethod {
-  CASH = "CASH",
-  TRANSFER = "TRANSFER",
-  OTHER = "OTHER",
-}
+export { ManualPaymentMethod as ManualRafflePaymentMethod } from "../../orders/manual-payment-method";
 
 @Entity({ name: "raffle_purchases" })
 @Index("IDX_raffle_purchases_raffle_created_at", ["raffleId", "createdAt"])
